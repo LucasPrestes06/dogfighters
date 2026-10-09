@@ -1,0 +1,13 @@
+# Render Blueprint: New + > Blueprint, pick the repo. (Or create a Web Service manually, see README.)
+services:
+  - type: web
+    name: dogfighters
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20
