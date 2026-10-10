@@ -125,7 +125,7 @@ export class LobbyScene extends UiScene {
   create() {
     this.initUi();
     if (!Net.room) { this.scene.start('Menu'); return; }
-    Net.on('started', r => this.scene.start('Game', { nick: Net.nick, room: r.code }));
+    Net.on('started', r => this.scene.start('Game', { nick: Net.nick, room: r.code, online: true }));
     Net.on('disconnect', () => this.scene.start('Menu'));
     this.startBtn = { label: 'INICIAR JOGO', y: 146, w: BTN_W, h: BTN_H, fn: async () => {
       if (this.busy) return; this.busy = true; const r = await Net.start(); this.busy = false; if (!r.ok) this.say(r.error); } };

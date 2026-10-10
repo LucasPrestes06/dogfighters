@@ -21,7 +21,7 @@ export const Net = {
     const s = (this.socket = io());
     s.on('hello', d => { this.pid = d.pid; });
     s.on('room:update', r => { this.room = r; this.fire('update', r); });
-    s.on('room:event', e => { this.log.push(e.text); if (this.log.length > 3) this.log.shift(); });
+    s.on('room:event', e => { this.log.push(e.text); if (this.log.length > 3) this.log.shift(); this.fire('event', e.text); });
     s.on('room:started', r => { this.room = r; this.fire('started', r); });
     s.on('disconnect', () => {
       const had = !!this.room; this.room = null; this.log = []; this.pid = null;

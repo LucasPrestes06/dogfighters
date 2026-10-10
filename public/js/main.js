@@ -1,5 +1,5 @@
 // Entry point: boots Phaser, generates textures, fills the whole window with pixel-perfect scaling.
-import { BASE_W, BASE_H, setViewSize } from './constants.js';
+import { ARENA_W, ARENA_H, ARENA_PAD, setViewSize } from './constants.js';
 import { makeSprites, makeBackgrounds } from './sprites.js';
 import { GameOverScene } from './ui.js';
 import { MenuScene, JoinScene, LobbyScene } from './lobby.js';
@@ -10,12 +10,14 @@ class BootScene extends Phaser.Scene {
   create() { makeSprites(this); makeBackgrounds(this); this.scene.start('Menu'); }
 }
 
-// Whole-pixel zoom (in device pixels) closest to the reference 320x180 view, then enough logical
-// pixels to cover the entire window. Wider/taller windows simply reveal more world (no stretching).
+// The WHOLE arena (+ small padding) must always be visible. Pick the largest whole-pixel zoom that fits
+// (device pixels); if that would waste more than 20% of the window, use the exact fractional fit instead.
+// The logical view then covers the full window: extra space around the arena is drawn as out-of-bounds.
 function computeView() {
   const dpr = window.devicePixelRatio || 1;
-  const s = Math.min(window.innerWidth * dpr / BASE_W, window.innerHeight * dpr / BASE_H);
-  const z = Math.max(1, Math.round(s)) / dpr;                     // CSS px per logical pixel
+  const s = Math.min(window.innerWidth * dpr / (ARENA_W + 2 * ARENA_PAD), window.innerHeight * dpr / (ARENA_H + 2 * ARENA_PAD));
+  const zi = Math.floor(s), zd = s < 1 || (zi >= 1 && zi / s < 0.8) ? s : zi;
+  const z = zd / dpr;                                                 // CSS px per logical pixel
   return { z, w: Math.ceil(window.innerWidth / z), h: Math.ceil(window.innerHeight / z) };
 }
 

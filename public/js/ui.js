@@ -38,7 +38,8 @@ export function drawButton(g, label, cx, cy, w, h, hover) {
 
 export class Hud {
   constructor(scene) { this.g = scene.add.graphics().setScrollFactor(0).setDepth(100); }
-  draw(p, score, kills, t) {
+  // x = { board: [[nick, score, isMe]...], banner: [lines], feed: [lines] } (all optional)
+  draw(p, score, kills, t, x = {}) {
     const g = this.g; g.clear();
     drawText(g, `SCORE: ${pad(score)}`, 6, 6, 0xffffff, 1, 0x0b2a5c);
     drawText(g, `KILLS: ${kills}`, 6, 14, 0xffd21f, 1, 0x0b2a5c);
@@ -53,6 +54,16 @@ export class Hud {
     const bw = 60, fill = p.reloading ? p.reloadProgress : p.ammo / MAX_AMMO;
     g.fillStyle(0x3a0e3a, 1); g.fillRect(5, H - 13, bw + 2, 6);
     g.fillStyle(p.reloading ? 0xff8a1f : 0xffd21f, 1); g.fillRect(6, H - 12, Math.round(bw * fill), 4);
+    if (x.board) x.board.forEach(([nick, sc, me], i) => {
+      const s = `${nick.slice(0, 9)} ${String(sc).padStart(4, '0')}`;
+      drawText(g, s, W - 6 - textWidth(s), 17 + i * 8, me ? 0x7cfc9a : 0xffffff, 1, 0x0b2a5c);
+    });
+    if (x.feed) x.feed.forEach((s, i) => centerText(g, s, 4 + i * 8, 0xffd21f, 1, 0x0b2a5c));
+    if (x.banner) x.banner.forEach((s, i) => centerText(g, s, (H >> 1) - 16 + i * 14, i ? 0xffffff : 0xe8173c, i ? 1 : 2, 0x0b2a5c));
+  }
+  waiting(t) {
+    const g = this.g; g.clear();
+    if (((t * 2) | 0) % 2 === 0) centerText(g, 'AGUARDANDO JOGADORES...', (H >> 1) - 3, 0xffffff, 1, 0x0b2a5c);
   }
 }
 

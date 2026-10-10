@@ -66,9 +66,9 @@ export class Sky {
     this.g = scene.add.tileSprite(0, 0, W, H, 'ground').setOrigin(0).setScrollFactor(0).setDepth(-20);
     this.c = scene.add.tileSprite(0, 0, W, H, 'clouds').setOrigin(0).setScrollFactor(0).setDepth(-10);
   }
-  scroll(x, y) {
+  scroll(x, y, drift = 0) {
     if (this.g.width !== W || this.g.height !== H) { this.g.setSize(W, H); this.c.setSize(W, H); } // window resized
     this.g.tilePositionX = Math.round(x * 0.5); this.g.tilePositionY = Math.round(y * 0.5);
-    this.c.tilePositionX = Math.round(x * 0.85); this.c.tilePositionY = Math.round(y * 0.85);
+    this.c.tilePositionX = Math.round(x * 0.85 + drift); this.c.tilePositionY = Math.round(y * 0.85);
   }
 }

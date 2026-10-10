@@ -63,6 +63,7 @@ Você não precisa instalar nada no seu computador: basta uma conta no GitHub e 
 Qualquer alteração enviada ao GitHub (upload ou `git push`) faz o Render publicar de novo automaticamente. Para forçar: painel do serviço → **Manual Deploy** → **Deploy latest commit**.
 
 ## 7. Regras importantes do Render para este jogo
+- **Esta versão tem multiplayer com simulação no servidor:** o servidor roda a partida (30 atualizações/s). Nada muda no deploy (mesmos comandos), mas a latência depende da região escolhida: escolha a região mais próxima dos jogadores.
 - **Mantenha 1 única instância** (Settings → Scaling). As salas ficam na memória do servidor; com 2+ instâncias os jogadores poderiam cair em servidores diferentes.
 - **Plano Free dorme** após ~15 min sem acesso. O primeiro acesso depois disso pode levar cerca de 1 minuto: o menu mostra **OFFLINE** até acordar; recarregue a página se demorar.
 - **Deploy ou reinício derruba as salas** (ficam em memória). Os jogadores voltam ao menu com "CONEXAO PERDIDA" e criam outra sala.

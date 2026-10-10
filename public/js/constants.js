@@ -7,8 +7,19 @@ export const ANGLES = 16;                 // pre-rendered plane rotations
 export const PLAYER_SPEED = 88;           // px/s, CONSTANT while flying
 export const PLAYER_TURN = 8;             // rad/s: how fast the heading swings toward the crosshair
 export const AIM_EPSILON = 3;             // px: closer than this the last valid direction is kept
-export const PLAYER_MARGIN = 12;          // px the plane is always kept inside the screen edges
-export const CAMERA_LERP = 5;             // camera smoothing (1/s)
+
+// ---- Arena & multiplayer (shared by the server and every client)
+export const ARENA_W = 480, ARENA_H = 270; // finite world in logical pixels, always fully visible
+export const ARENA_MARGIN = 10;           // planes stay this far from the border
+export const ARENA_PAD = 10;              // extra view padding around the arena when fitting the window
+export const MAX_PLAYERS = 4;
+export const TICK_RATE = 30;              // server simulation + snapshot rate (Hz)
+export const INPUT_RATE = 30;             // client input messages per second (max)
+export const INTERP_DELAY = 0.07;         // s: remote entities are rendered slightly in the past (interpolation)
+export const PLAYER_KILL_SCORE = 200;     // points for shooting down another player
+export const RESPAWN_TIME = 3;            // s (online matches only)
+export const SPAWN_INVULN = 1.5;          // s of invulnerability after (re)spawning online
+export const READY_TIMEOUT = 6000;        // ms the server waits for all clients to load the match
 export const PLAYER_HEALTH = 5;
 export const PLAYER_RADIUS = 6;
 export const INVULN_TIME = 1.2;           // s
@@ -31,7 +42,6 @@ export const ENEMY_FIRE_COOLDOWN = 1.6;
 export const ENEMY_BULLET_SPEED = 120;
 export const ENEMY_BULLET_LIFE = 1.5;
 export const MAX_ENEMIES = 6;
-export const SPAWN_MARGIN = 30;           // enemies spawn this far beyond the screen half-diagonal
 
 export const MAX_PARTICLES = 500;
 export const TRAIL_LENGTH = 70;

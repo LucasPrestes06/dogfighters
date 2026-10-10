@@ -1,76 +1,50 @@
-// Player biplane: flies at constant speed; the crosshair only decides the DIRECTION. Left click fires toward it.
-import { PLAYER_SPEED, PLAYER_TURN, AIM_EPSILON, PLAYER_HEALTH, INVULN_TIME, FIRE_RATE, MAX_AMMO, RELOAD_TIME, TRAIL_LENGTH } from './constants.js';
-import { OWNER_PLAYER } from './bullet.js';
+// Plane rendering (local + remote players) and client-side prediction of the local plane.
+import { TRAIL_LENGTH, ARENA_W, ARENA_H, ARENA_MARGIN, PLAYER_SPEED } from './constants.js';
 import { Trail } from './effects.js';
-import { Sfx } from './audio.js';
-import { wrapPi, angleIndex, clamp, rand } from './utils.js';
+import { stepMovement } from './sim.js';
+import { angleIndex, wrapPi, clamp } from './utils.js';
 
-export class Player {
-  constructor(scene, bullets, fx) {
-    this.bullets = bullets; this.fx = fx; this.aim = { x: 0, y: 0 };
+// Sprite + shadow + optional contrails + damage smoke. Pure view: it never decides anything about the match.
+export class PlaneView {
+  constructor(scene, pre, fx, trails, lowHp) {
+    this.fx = fx; this.pre = pre; this.lowHp = lowHp;
     this.shadow = scene.add.image(0, 0, 'sh_0').setDepth(5);
-    this.img = scene.add.image(0, 0, 'pl_0_0').setDepth(10);
-    this.trailL = new Trail(TRAIL_LENGTH); this.trailR = new Trail(TRAIL_LENGTH);
-    this.reset();
+    this.img = scene.add.image(0, 0, `${pre}_0_0`).setDepth(10);
+    this.trails = trails ? [new Trail(TRAIL_LENGTH), new Trail(TRAIL_LENGTH)] : null;
+    this.propT = Math.random(); this.acc = 0; this.smokeT = 0; this.x = 0; this.y = 0; this.angle = 0; this.alive = false;
   }
-  reset() {
-    Object.assign(this, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, aimAngle: 0, hp: PLAYER_HEALTH, ammo: MAX_AMMO,
-      reloading: false, reloadT: 0, fireT: 0, inv: 0, alive: true, propT: 0, trailAcc: 0, smokeT: 0, shake: 0 });
-    this.trailL.clear(); this.trailR.clear(); this.img.setVisible(true); this.shadow.setVisible(true);
-  }
-  get reloadProgress() { return this.reloading ? this.reloadT / RELOAD_TIME : 1; }
-
-  update(dt, input) {
-    this.inv = Math.max(0, this.inv - dt); this.fireT -= dt; this.shake = Math.max(0, this.shake - dt);
-
-    // Crosshair (world coords) -> desired direction. Distance never affects speed or stops the plane.
-    input.worldAim(this.aim);
-    const dx = this.aim.x - this.x, dy = this.aim.y - this.y;
-    if (dx * dx + dy * dy > AIM_EPSILON * AIM_EPSILON) this.aimAngle = Math.atan2(dy, dx); // else keep last valid direction (no 0/0)
-    // Heading swings smoothly toward the desired direction (rate-limited, frame-rate independent)
-    this.angle = wrapPi(this.angle + clamp(wrapPi(this.aimAngle - this.angle), -PLAYER_TURN * dt, PLAYER_TURN * dt));
-    // Velocity = unit heading vector * PLAYER_SPEED  =>  |v| is always exactly PLAYER_SPEED (diagonals included)
-    this.vx = Math.cos(this.angle) * PLAYER_SPEED; this.vy = Math.sin(this.angle) * PLAYER_SPEED;
-    this.x += this.vx * dt; this.y += this.vy * dt;
-
-    // Weapon + reload (no shots while reloading)
-    if (this.reloading) {
-      this.reloadT += dt;
-      if (this.reloadT >= RELOAD_TIME) { this.reloading = false; this.ammo = MAX_AMMO; Sfx.play('reloadDone'); }
-    } else if (input.fire && this.ammo > 0 && this.fireT <= 0) {
-      const ca = Math.cos(this.aimAngle), sa = Math.sin(this.aimAngle);
-      const a = this.aimAngle + rand(-0.025, 0.025), mx = this.x + ca * 10, my = this.y + sa * 10;
-      this.bullets.fire(mx, my, a, OWNER_PLAYER);          // direction: plane -> crosshair
-      this.fx.muzzle(mx, my, this.aimAngle); Sfx.play('gun');
-      this.ammo--; this.fireT = FIRE_RATE;
-      if (this.ammo === 0) { this.reloading = true; this.reloadT = 0; Sfx.play('reload'); }
+  set(x, y, angle, alive, inv, hp, dt) {
+    this.x = x; this.y = y; this.angle = angle; this.alive = alive; this.propT += dt;
+    this.img.setVisible(alive && (!inv || ((this.propT * 20) | 0) % 2 === 0)); this.shadow.setVisible(alive);
+    if (alive) {
+      const i = angleIndex(angle);
+      this.img.setTexture(`${this.pre}_${i}_${(this.propT * 25 | 0) & 1}`).setPosition(Math.round(x), Math.round(y));
+      this.shadow.setTexture(`sh_${i}`).setPosition(Math.round(x) + 6, Math.round(y) + 9);
+      if (hp <= this.lowHp && (this.smokeT -= dt) <= 0) { this.smokeT = 0.07; this.fx.smoke(x - Math.cos(angle) * 6, y - Math.sin(angle) * 6); }
     }
+    if (!this.trails) return;
+    if (alive) {
+      this.acc += dt;
+      const px = -Math.sin(angle) * 7, py = Math.cos(angle) * 7;
+      while (this.acc >= 1 / 60) { this.acc -= 1 / 60; this.trails[0].push(x + px, y + py); this.trails[1].push(x - px, y - py); }
+    } else { this.trails[0].drain(); this.trails[1].drain(); }
+  }
+  drawTrails(g) { if (this.trails) { this.trails[0].draw(g); this.trails[1].draw(g); } }
+  destroy() { this.img.destroy(); this.shadow.destroy(); }
+}
 
-    // Contrails at wingtips (fixed 60 Hz)
-    this.trailAcc += dt;
-    const px = -Math.sin(this.angle) * 7, py = Math.cos(this.angle) * 7;
-    while (this.trailAcc >= 1 / 60) {
-      this.trailAcc -= 1 / 60;
-      this.trailL.push(this.x + px, this.y + py); this.trailR.push(this.x - px, this.y - py);
-    }
-    if (this.hp <= 2 && (this.smokeT -= dt) <= 0) { this.smokeT = 0.07; this.fx.smoke(this.x - Math.cos(this.angle) * 6, this.y - Math.sin(this.angle) * 6); }
-    this.propT += dt;
+// Local prediction: the plane responds instantly using the SAME movement rules as the server, then is
+// gently pulled toward the (latency-compensated) authoritative position so it never drifts.
+export class Predictor {
+  constructor() { this.x = 0; this.y = 0; this.angle = 0; this.aimAngle = 0; this.has = false; }
+  snap(s) { this.x = s.x; this.y = s.y; this.angle = s.angle; this.aimAngle = s.angle; this.has = true; }
+  step(dt, ax, ay) { stepMovement(this, ax, ay, dt); }
+  reconcile(dt, s, ahead) {
+    const t = { x: clamp(s.x + Math.cos(s.angle) * PLAYER_SPEED * ahead, ARENA_MARGIN, ARENA_W - ARENA_MARGIN),
+                y: clamp(s.y + Math.sin(s.angle) * PLAYER_SPEED * ahead, ARENA_MARGIN, ARENA_H - ARENA_MARGIN) };
+    const ex = t.x - this.x, ey = t.y - this.y;
+    if (Math.hypot(ex, ey) > 40) { this.snap(s); this.x = t.x; this.y = t.y; return; }  // large error: snap
+    const k = Math.min(1, dt * 6);                                                        // small error: blend
+    this.x += ex * k; this.y += ey * k; this.angle = wrapPi(this.angle + wrapPi(s.angle - this.angle) * k);
   }
-  // Sprite placement (whole pixels); called after the camera has been updated.
-  render() {
-    const i = angleIndex(this.angle);
-    this.img.setTexture(`pl_${i}_${(this.propT * 25 | 0) & 1}`).setPosition(Math.round(this.x), Math.round(this.y));
-    this.img.setVisible(this.inv <= 0 || ((this.inv * 20) | 0) % 2 === 0);
-    this.shadow.setTexture(`sh_${i}`).setPosition(Math.round(this.x) + 6, Math.round(this.y) + 9);
-  }
-  updateDead() { this.trailL.drain(); this.trailR.drain(); }
-  hurt() {
-    if (this.inv > 0 || !this.alive) return;
-    this.hp--; this.inv = INVULN_TIME; this.shake = 0.2; Sfx.play('hurt');
-    if (this.hp <= 0) {
-      this.alive = false; this.img.setVisible(false); this.shadow.setVisible(false);
-      this.fx.explosion(this.x, this.y); Sfx.play('boom'); Sfx.stopEngine();
-    }
-  }
-  drawTrails(g) { this.trailL.draw(g); this.trailR.draw(g); }
 }
