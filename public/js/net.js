@@ -23,6 +23,8 @@ export const Net = {
     s.on('room:update', r => { this.room = r; this.fire('update', r); });
     s.on('room:event', e => { this.log.push(e.text); if (this.log.length > 3) this.log.shift(); this.fire('event', e.text); });
     s.on('room:started', r => { this.room = r; this.fire('started', r); });
+    s.on('room:lobby', r => { this.room = r; this.fire('lobby', r); });      // host sent everybody back to the lobby
+    s.on('g:phase', d => this.fire('phase', d));                               // round / scoreboard / match-end state from the server
     s.on('disconnect', () => {
       const had = !!this.room; this.room = null; this.log = []; this.pid = null;
       if (had) { this.notice = 'CONEXAO PERDIDA'; this.fire('disconnect'); }
@@ -45,5 +47,7 @@ export const Net = {
   async create(nick) { const r = await this.request('room:create', { nick }); if (r.ok) { this.setNick(r.nick); this.room = r.room; this.log = []; } return r; },
   async join(code, nick) { const r = await this.request('room:join', { code, nick }); if (r.ok) { this.setNick(r.nick); this.room = r.room; this.log = []; } return r; },
   start() { return this.request('room:start'); },
+  setWins(n) { return this.request('room:config', { wins: n }); },          // host only (server enforces it)
+  toLobby() { return this.request('room:lobby'); },                          // host only, after the match
   leave() { if (this.socket && this.room) this.socket.emit('room:leave'); this.room = null; this.log = []; },
 };

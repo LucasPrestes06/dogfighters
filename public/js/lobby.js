@@ -1,5 +1,5 @@
 // Nickname + main menu, join-by-code screen and lobby. All text drawn with the game's pixel font.
-import { W } from './constants.js';
+import { W, WIN_OPTIONS } from './constants.js';
 import { Sky } from './effects.js';
 import { Sfx } from './audio.js';
 import { Net, validateNick, NICK_MAX } from './net.js';
@@ -43,11 +43,11 @@ class UiScene extends Phaser.Scene {
     this.events.once('shutdown', () => Net.clear());
     if (Net.notice) { this.say(Net.notice); Net.notice = ''; }
   }
-  over(b, p, o) { return Math.abs(p.x - (W >> 1)) <= b.w / 2 && Math.abs(p.y - (o + b.y)) <= b.h / 2; }
+  over(b, p, o) { return Math.abs(p.x - ((W >> 1) + (b.dx || 0))) <= b.w / 2 && Math.abs(p.y - (o + b.y)) <= b.h / 2; }
   say(t) { this.msg = t; this.msgT = this.time.now + 4000; }
   drawUi(g, o, msgY) {
     const ptr = this.input.activePointer;
-    for (const b of this.buttons) drawButton(g, b.label, W >> 1, o + b.y, b.w, b.h, this.over(b, ptr, o));
+    for (const b of this.buttons) drawButton(g, b.label, (W >> 1) + (b.dx || 0), o + b.y, b.w, b.h, this.over(b, ptr, o) || !!(b.sel && b.sel()));
     if (this.time.now < this.msgT) centerText(g, this.msg, o + msgY, 0xff5a5a, 1, 0x3a0e3a);
   }
   title(g, o, y, sc) { centerText(g, 'DOGFIGHTERS', o + y, 0xffd21f, sc, 0x8a1650); }
@@ -127,25 +127,37 @@ export class LobbyScene extends UiScene {
     if (!Net.room) { this.scene.start('Menu'); return; }
     Net.on('started', r => this.scene.start('Game', { nick: Net.nick, room: r.code, online: true }));
     Net.on('disconnect', () => this.scene.start('Menu'));
-    this.startBtn = { label: 'INICIAR JOGO', y: 146, w: BTN_W, h: BTN_H, fn: async () => {
+    this.startBtn = { label: 'INICIAR JOGO', y: 168, w: BTN_W, h: BTN_H, fn: async () => {
       if (this.busy) return; this.busy = true; const r = await Net.start(); this.busy = false; if (!r.ok) this.say(r.error); } };
-    this.leaveBtn = { label: 'SAIR DA SALA', y: 166, w: BTN_W, h: BTN_H, fn: () => { Net.leave(); this.scene.start('Menu'); } };
+    this.leaveBtn = { label: 'SAIR DA SALA', y: 188, w: BTN_W, h: BTN_H, fn: () => { Net.leave(); this.scene.start('Menu'); } };
+    // Win-target selector (host picks, server validates + stores it on the room; everyone sees the same value)
+    this.winBtns = WIN_OPTIONS.map((n, i) => ({ label: String(n), y: 58, dx: (i - 1) * 44, w: 40, h: 16, sel: () => Net.room && Net.room.wins === n,
+      fn: async () => { const r = await Net.setWins(n); if (!r.ok) this.say(r.error); } }));
   }
   update(time) {
     const room = Net.room; if (!room) return;
     const o = offY(), g = this.g; this.sky.scroll(time * 0.03, 0); g.clear();
     const isHost = room.players.some(p => p.host && p.pid === Net.pid);
-    this.buttons = isHost ? [this.startBtn, this.leaveBtn] : [this.leaveBtn];
+    this.buttons = isHost ? [...this.winBtns, this.startBtn, this.leaveBtn] : [this.leaveBtn];
     this.title(g, o, 6, 3);
-    centerText(g, `SALA: ${room.code}`, o + 28, 0xffffff, 2, SHADOW);
-    centerText(g, `JOGADORES NA SALA ${room.players.length}/4`, o + 46, 0xffffff, 1, SHADOW);
-    room.players.forEach((p, i) => {
-      const t = p.nick + (p.host ? ' [HOST]' : '') + (p.pid === Net.pid ? ' [VOCE]' : '');
-      centerText(g, t, o + 56 + i * 9, p.host ? 0xffd21f : p.pid === Net.pid ? 0x7cfc9a : 0xffffff, 1, SHADOW);
+    centerText(g, `SALA: ${room.code}`, o + 26, 0xffffff, 2, SHADOW);
+    centerText(g, `VITORIAS PARA VENCER${isHost ? '' : ': ' + room.wins}`, o + 44, 0xffffff, 1, SHADOW);
+    if (!isHost) for (const b of this.winBtns) drawButton(g, b.label, (W >> 1) + b.dx, o + b.y, b.w, b.h, b.sel());   // read-only for guests
+    centerText(g, `JOGADORES NA SALA ${room.players.length}`, o + 74, 0xffffff, 1, SHADOW);
+    // Player list: one centred column up to 6 players, then as many columns as fit the window.
+    const per = 6, colW = 112, n = room.players.length;
+    const cols = n <= per ? 1 : Math.max(1, Math.min(Math.ceil(n / per), Math.floor((W - 16) / colW)));
+    const shown = room.players.slice(0, cols * per), x0 = (W - cols * colW) >> 1;
+    shown.forEach((p, i) => {
+      const me = p.pid === Net.pid, col = cols === 1 ? 0 : (i / per) | 0, row = i % per, y = o + 84 + row * 9;
+      const color = p.host ? 0xffd21f : me ? 0x7cfc9a : 0xffffff;
+      if (cols === 1) centerText(g, p.nick + (p.host ? ' [HOST]' : '') + (me ? ' [VOCE]' : ''), y, color, 1, SHADOW);
+      else drawText(g, p.nick.slice(0, 11) + (p.host ? ' [H]' : ''), x0 + col * colW + 4, y, color, 1, SHADOW);
     });
-    centerText(g, 'STATUS: AGUARDANDO', o + 96, 0xffffff, 1, SHADOW);
-    Net.log.forEach((t, i) => centerText(g, t, o + 106 + i * 8, 0xcfe8ff, 1, SHADOW));
-    if (!isHost && ((time / 500) | 0) % 2 === 0) centerText(g, 'AGUARDANDO O HOST', o + 146, 0xffd21f, 1, SHADOW);
-    this.drawUi(g, o, 132);
+    if (n > shown.length) centerText(g, `+${n - shown.length} JOGADORES`, o + 84 + per * 9, 0x8aa6d8, 1, SHADOW);
+    centerText(g, 'STATUS: AGUARDANDO', o + 142, 0xffffff, 1, SHADOW);
+    if (Net.log.length) centerText(g, Net.log[Net.log.length - 1], o + 150, 0xcfe8ff, 1, SHADOW);
+    if (!isHost && ((time / 500) | 0) % 2 === 0) centerText(g, 'AGUARDANDO O HOST', o + 160, 0xffd21f, 1, SHADOW);
+    this.drawUi(g, o, 158);
   }
 }

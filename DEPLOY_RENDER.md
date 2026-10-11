@@ -69,6 +69,8 @@ Qualquer alteração enviada ao GitHub (upload ou `git push`) faz o Render publi
 - **Deploy ou reinício derruba as salas** (ficam em memória). Os jogadores voltam ao menu com "CONEXAO PERDIDA" e criam outra sala.
 - Para o servidor nunca dormir e ter desempenho estável, use um plano pago (Starter).
 
+- **Limite de jogadores por sala (v1.1):** não há mais o limite fixo de 4. Existe um teto técnico configurável: variável de ambiente `MAX_PLAYERS_PER_ROOM` (padrão 24). Para alterar: Render → Environment → Add Environment Variable. Nenhuma outra mudança de deploy é necessária.
+
 ## 8. Problemas comuns
 | Sintoma | O que fazer |
 |---|---|

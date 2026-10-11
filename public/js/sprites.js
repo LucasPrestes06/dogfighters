@@ -8,6 +8,9 @@ const PAL = {
   p2: { R: '#9b4de0', D: '#5a2a8a', Y: '#ffd21f', O: '#ff8a1f', G: '#9aa3b5', K: '#2a0e3a', W: '#ffffff', P: '#f2b89a' },
   p3: { R: '#ff8a1f', D: '#a8480f', Y: '#fff3a0', O: '#e8173c', G: '#9aa3b5', K: '#3a1a0e', W: '#ffffff', P: '#f2b89a' },
   p4: { R: '#e8edf5', D: '#7d8aa3', Y: '#e8173c', O: '#ffd21f', G: '#6b7280', K: '#1a2236', W: '#ffffff', P: '#f2b89a' },
+  p5: { R: '#ff6ec7', D: '#a02a78', Y: '#ffe14a', O: '#ffffff', G: '#9aa3b5', K: '#3a0e2a', W: '#ffffff', P: '#f2b89a' },
+  p6: { R: '#ffe14a', D: '#a8860a', Y: '#e8173c', O: '#ff8a1f', G: '#9aa3b5', K: '#3a2a0e', W: '#ffffff', P: '#f2b89a' },
+  p7: { R: '#3a4a6a', D: '#1a2236', Y: '#ffd21f', O: '#ff8a1f', G: '#9aa3b5', K: '#0a0e1a', W: '#ffffff', P: '#f2b89a' },
   en: { R: '#2f9e5b', D: '#17613a', Y: '#f4f4f4', O: '#ff8a1f', G: '#6b7280', K: '#0f2a24', W: '#ffffff', P: '#f2b89a' },
 };
 

@@ -1,4 +1,4 @@
-// DOGFIGHTERS server (Render): static files + Socket.IO rooms + AUTHORITATIVE match simulation.
+// DOGFIGHTERS server (Render): static files + Socket.IO rooms + AUTHORITATIVE Free-For-All matches.
 // Run exactly ONE instance: rooms and matches live in this process' memory.
 import express from 'express';
 import http from 'http';
@@ -6,13 +6,16 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
-import { Match } from './public/js/sim.js';                 // same rules the solo mode runs locally
-import { TICK_RATE, MAX_PLAYERS, READY_TIMEOUT } from './public/js/constants.js';
+import { FfaMatch, PHASE } from './ffa.js';                  // round/win rules on top of the shared combat sim
+import { TICK_RATE, READY_TIMEOUT, WIN_OPTIONS, DEFAULT_WINS, MIN_PLAYERS } from './public/js/constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 10000; // Render sets PORT; 10000 is only a safety default
+
+// Technical safety cap (NOT the old fixed limit of 4). Configurable: MAX_PLAYERS_PER_ROOM=40 (default 24).
+const MAX_PLAYERS_PER_ROOM = Math.max(MIN_PLAYERS, parseInt(process.env.MAX_PLAYERS_PER_ROOM || '24', 10) || 24);
 
 // Render terminates TLS in a reverse proxy; WebSockets work out of the box (Socket.IO falls back to polling).
 app.set('trust proxy', 1);
@@ -46,9 +49,11 @@ function validateNick(raw) {
 // ---------------------------------------------------------------- rooms
 // Identity = the socket connection (socket.id, never sent to other clients); `pid` is the public per-session id used
 // inside matches. Nicknames are display-only, so duplicates are fine and permissions never depend on them.
+// Room phases: WAITING (lobby) -> STARTING -> ROUND_ACTIVE <-> ROUND_RESULTS -> MATCH_FINISHED -> WAITING.
+// Only the server moves a room between phases.
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MAX_ROOMS = 500, MAX_CONN_PER_IP = 30, EVENT_LIMIT = 30, EVENT_WINDOW = 5000, GAME_MSG_LIMIT = 100, JOIN_FAILS = 6, JOIN_WINDOW = 30000;
-const rooms = new Map(); // code -> { code, status, hostId, members:[{id,pid,nick}], match, running, ready:Set, goTimer }
+const rooms = new Map(); // code -> { code, phase, winsToWin, hostId, members:[{id,pid,nick}], ffa, ready:Set, goTimer }
 const ipCount = new Map();
 
 function newCode() {
@@ -57,7 +62,8 @@ function newCode() {
     if (!rooms.has(c)) return c;
   }
 }
-const snapshot = r => ({ code: r.code, status: r.status, players: r.members.map(m => ({ pid: m.pid, nick: m.nick, host: m.id === r.hostId })) });
+const snapshot = r => ({ code: r.code, phase: r.phase, wins: r.winsToWin, max: MAX_PLAYERS_PER_ROOM,
+  players: r.members.map(m => ({ pid: m.pid, nick: m.nick, host: m.id === r.hostId })) });
 const broadcast = r => io.to(r.code).emit('room:update', snapshot(r));
 const say = (r, text) => io.to(r.code).emit('room:event', { text });
 
@@ -66,14 +72,22 @@ function addMember(room, socket) {
   socket.join(room.code); socket.data.room = room.code;
 }
 
-// Ordered start: server creates the Match, tells clients to load, and begins ticking when everyone is ready
-// (or after READY_TIMEOUT, so a client that never answers can't block the room).
-function beginMatch(room) {
-  if (room.running || !rooms.has(room.code)) return;
-  clearTimeout(room.goTimer); room.running = true;
-  io.to(room.code).emit('game:go');
+// Back to the lobby: drops the finished/cancelled match so the next one starts with a brand-new scoreboard.
+function resetToLobby(room, notice) {
+  clearTimeout(room.goTimer); room.ffa = null; room.phase = 'WAITING'; room.ready = new Set();
+  io.to(room.code).emit('room:lobby', snapshot(room));
+  if (notice) say(room, notice);
+  broadcast(room);
 }
-function checkReady(room) { if (room.match && !room.running && room.members.every(m => room.ready.has(m.pid))) beginMatch(room); }
+// Ordered start: server creates the match, clients load, then the server begins round 1 when everyone answered
+// 'game:ready' (or after READY_TIMEOUT, so a silent client can never block the room).
+function beginMatch(room) {
+  if (room.phase !== 'STARTING' || !rooms.has(room.code)) return;
+  clearTimeout(room.goTimer);
+  if (room.members.length < MIN_PLAYERS || !room.ffa.start()) return resetToLobby(room, 'JOGADORES INSUFICIENTES');
+  room.phase = room.ffa.phase;
+}
+function checkReady(room) { if (room.phase === 'STARTING' && room.members.every(m => room.ready.has(m.pid))) beginMatch(room); }
 
 function leaveRoom(socket) {
   const room = rooms.get(socket.data.room);
@@ -83,7 +97,7 @@ function leaveRoom(socket) {
   const i = room.members.findIndex(m => m.id === socket.id);
   if (i < 0) return;
   const [gone] = room.members.splice(i, 1);
-  if (room.match) room.match.removePlayer(gone.pid);      // plane disappears from every client's snapshot
+  if (room.ffa) room.ffa.removePlayer(gone.pid);          // re-evaluates the round on the spot (win counted once)
   room.ready.delete(gone.pid);
   if (room.members.length === 0) { clearTimeout(room.goTimer); rooms.delete(room.code); return; }
   say(room, `${gone.nick} SAIU DA SALA`);
@@ -94,19 +108,22 @@ function leaveRoom(socket) {
 // ---------------------------------------------------------------- authoritative game loop
 const TICK_MS = 1000 / TICK_RATE;
 let lastLoop = Date.now(), acc = 0;
+const live = r => r.ffa && (r.ffa.phase === PHASE.ACTIVE || r.ffa.phase === PHASE.RESULTS);
 setInterval(() => {
   const now = Date.now(); acc += Math.min(now - lastLoop, 250); lastLoop = now;   // fixed-step simulation clock
-  let steps = 0;
+  let steps = 0; const stepped = new Set();
   while (acc >= TICK_MS) {
     acc -= TICK_MS; steps++;
-    for (const room of rooms.values()) if (room.running) room.match.step(1 / TICK_RATE);
+    for (const room of rooms.values()) if (live(room) && room.ffa.step(1 / TICK_RATE)) stepped.add(room);
   }
   if (!steps) return;
   for (const room of rooms.values()) {
-    if (!room.running) continue;
-    io.to(room.code).volatile.emit('g:s', room.match.snapshot());    // state: latest wins, stale packets may be dropped
-    const ev = room.match.drainEvents();
-    if (ev.length) io.to(room.code).emit('g:e', ev);                  // events (fire/hit/kill): reliable + ordered
+    if (!room.ffa) continue;
+    const out = room.ffa.drain();
+    if (stepped.has(room)) io.to(room.code).volatile.emit('g:s', room.ffa.snapshot());   // state: latest wins, stale packets may drop
+    if (out.events.length) io.to(room.code).emit('g:e', out.events);                      // events (fire/hit/elimination): reliable + ordered
+    for (const m of out.msgs) io.to(room.code).emit(m.ev, m.data);                        // phase changes + scoreboard: reliable + ordered
+    if (room.phase !== room.ffa.phase) { room.phase = room.ffa.phase; broadcast(room); }
   }
 }, 10);
 
@@ -143,13 +160,14 @@ io.on('connection', socket => {
   socket.emit('hello', { pid: socket.data.pid });
   const reply = (ack, payload) => { if (typeof ack === 'function') ack(payload); };
   const fail = (ack, error) => reply(ack, { ok: false, error });
+  const myRoom = () => rooms.get(socket.data.room);
 
   socket.on('room:create', (data, ack) => {
     if (socket.data.room) return fail(ack, 'VOCE JA ESTA EM UMA SALA');
     const v = validateNick(data && data.nick); if (!v.ok) return reply(ack, v);
     if (rooms.size >= MAX_ROOMS) return fail(ack, 'SERVIDOR CHEIO: TENTE MAIS TARDE');
     socket.data.nick = v.nick;
-    const room = { code: newCode(), status: 'waiting', hostId: socket.id, members: [], match: null, running: false, ready: new Set(), goTimer: null };
+    const room = { code: newCode(), phase: 'WAITING', winsToWin: DEFAULT_WINS, hostId: socket.id, members: [], ffa: null, ready: new Set(), goTimer: null };
     rooms.set(room.code, room); addMember(room, socket);
     reply(ack, { ok: true, nick: v.nick, room: snapshot(room) });
     broadcast(room);
@@ -166,8 +184,9 @@ io.on('connection', socket => {
     if (!/^[A-Z0-9]{5}$/.test(code)) { socket.data.fails.push(now); return fail(ack, 'CODIGO INVALIDO'); }
     const room = rooms.get(code);
     if (!room) { socket.data.fails.push(now); return fail(ack, 'SALA NAO ENCONTRADA'); }
-    if (room.status !== 'waiting') return fail(ack, 'PARTIDA JA INICIADA');
-    if (room.members.length >= MAX_PLAYERS) return fail(ack, 'SALA CHEIA');
+    if (room.members.some(m => m.id === socket.id)) return fail(ack, 'VOCE JA ESTA NESTA SALA');   // never registered twice
+    if (room.phase !== 'WAITING') return fail(ack, 'PARTIDA JA INICIADA');                          // joins only in the lobby
+    if (room.members.length >= MAX_PLAYERS_PER_ROOM) return fail(ack, 'SALA CHEIA');
     socket.data.nick = v.nick;
     addMember(room, socket);
     reply(ack, { ok: true, nick: v.nick, room: snapshot(room) });
@@ -176,38 +195,61 @@ io.on('connection', socket => {
 
   socket.on('room:leave', () => leaveRoom(socket));
 
+  // Host-only, lobby-only: how many wins take the match. Stored on the room (not in the browser).
+  socket.on('room:config', (data, ack) => {
+    const room = myRoom();
+    if (!room) return fail(ack, 'VOCE NAO ESTA EM UMA SALA');
+    if (room.hostId !== socket.id) return fail(ack, 'APENAS O HOST PODE ALTERAR');
+    if (room.phase !== 'WAITING') return fail(ack, 'CONFIGURACAO BLOQUEADA');
+    const w = data && data.wins;
+    if (!Number.isInteger(w) || !WIN_OPTIONS.includes(w)) return fail(ack, 'VALOR INVALIDO');
+    room.winsToWin = w; reply(ack, { ok: true, wins: w }); broadcast(room);
+  });
+
   socket.on('room:start', (data, ack) => {
-    const room = rooms.get(socket.data.room);
+    const room = myRoom();
     if (!room) return fail(ack, 'VOCE NAO ESTA EM UMA SALA');
     if (room.hostId !== socket.id) return fail(ack, 'APENAS O HOST PODE INICIAR'); // authoritative permission check
-    if (room.status !== 'waiting') return fail(ack, 'PARTIDA JA INICIADA');
-    room.status = 'playing';
-    room.match = new Match({ respawn: true });                                      // fresh state for every new match
-    for (const m of room.members) room.match.addPlayer(m.pid, m.nick);
-    room.ready = new Set(); room.running = false;
+    if (room.phase !== 'WAITING') return fail(ack, 'PARTIDA JA INICIADA');
+    if (room.members.length < MIN_PLAYERS) return fail(ack, `MINIMO ${MIN_PLAYERS} JOGADORES`);
+    if (!WIN_OPTIONS.includes(room.winsToWin)) room.winsToWin = DEFAULT_WINS;
+    room.phase = 'STARTING';                                                        // from here the win target is locked
+    room.ffa = new FfaMatch(room.members.map(m => ({ pid: m.pid, nick: m.nick })), room.winsToWin);   // fresh scoreboard
+    room.ready = new Set();
     room.goTimer = setTimeout(() => beginMatch(room), READY_TIMEOUT);
     reply(ack, { ok: true });
     io.to(room.code).emit('room:started', snapshot(room));                          // clients load the scene, then answer 'game:ready'
+    broadcast(room);
   });
 
   socket.on('game:ready', () => {
-    const room = rooms.get(socket.data.room);
-    if (!room || !room.match || room.running) return;
+    const room = myRoom();
+    if (!room || room.phase !== 'STARTING') return;
     room.ready.add(socket.data.pid); checkReady(room);
   });
 
+  // Host sends everybody back to the lobby after a finished match (a new match = new scoreboard).
+  socket.on('room:lobby', (data, ack) => {
+    const room = myRoom();
+    if (!room) return fail(ack, 'VOCE NAO ESTA EM UMA SALA');
+    if (room.hostId !== socket.id) return fail(ack, 'APENAS O HOST PODE VOLTAR AO LOBBY');
+    if (room.phase !== 'MATCH_FINISHED') return fail(ack, 'A PARTIDA AINDA NAO TERMINOU');
+    reply(ack, { ok: true }); resetToLobby(room);
+  });
+
   // Player input: only aim position + fire intent. Validated/clamped inside Match.setInput; position, speed, ammo,
-  // damage and score are never accepted from the client.
+  // damage, elimination and wins are never accepted from the client.
   socket.on('in', d => {
-    const room = rooms.get(socket.data.room);
-    if (room && room.running && d && typeof d === 'object') room.match.setInput(socket.data.pid, { s: d.s, x: d.x, y: d.y, f: d.f });
+    const room = myRoom();
+    if (room && room.ffa && d && typeof d === 'object') room.ffa.setInput(socket.data.pid, { s: d.s, x: d.x, y: d.y, f: d.f });
   });
   socket.on('png', (t, ack) => { if (typeof ack === 'function') ack(t); });     // latency probe
 
-  // Validated nickname change request (allowed while in a room; everyone is notified).
+  // Validated nickname change request (allowed in the lobby only, so scoreboards never change identity mid-match).
   socket.on('nick:change', (data, ack) => {
     const v = validateNick(data && data.nick); if (!v.ok) return reply(ack, v);
-    const room = rooms.get(socket.data.room);
+    const room = myRoom();
+    if (room && room.phase !== 'WAITING') return fail(ack, 'NICK BLOQUEADO DURANTE A PARTIDA');
     const old = socket.data.nick; socket.data.nick = v.nick;
     if (room) { const m = room.members.find(x => x.id === socket.id); if (m) m.nick = v.nick; say(room, `${old} AGORA E ${v.nick}`); broadcast(room); }
     reply(ack, { ok: true, nick: v.nick });
@@ -216,7 +258,7 @@ io.on('connection', socket => {
   socket.on('disconnect', () => leaveRoom(socket));
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`DOGFIGHTERS listening on port ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`DOGFIGHTERS listening on port ${PORT} (max ${MAX_PLAYERS_PER_ROOM} players per room)`));
 
 // Render sends SIGTERM on every deploy/restart: close cleanly (players are returned to the menu by the client).
 function shutdown() {

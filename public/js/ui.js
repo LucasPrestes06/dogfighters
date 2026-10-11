@@ -41,8 +41,8 @@ export class Hud {
   // x = { board: [[nick, score, isMe]...], banner: [lines], feed: [lines] } (all optional)
   draw(p, score, kills, t, x = {}) {
     const g = this.g; g.clear();
-    drawText(g, `SCORE: ${pad(score)}`, 6, 6, 0xffffff, 1, 0x0b2a5c);
-    drawText(g, `KILLS: ${kills}`, 6, 14, 0xffd21f, 1, 0x0b2a5c);
+    drawText(g, x.scoreText || `SCORE: ${pad(score)}`, 6, 6, 0xffffff, 1, 0x0b2a5c);
+    drawText(g, x.killsText || `KILLS: ${kills}`, 6, 14, 0xffd21f, 1, 0x0b2a5c);
     drawText(g, 'HP', W - 8 - PLAYER_HEALTH * 9 - 12, 6, 0xffffff, 1, 0x0b2a5c);
     for (let i = 0; i < PLAYER_HEALTH; i++) {
       const x = W - 6 - (PLAYER_HEALTH - i) * 9 + 2;

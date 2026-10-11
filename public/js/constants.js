@@ -12,11 +12,15 @@ export const AIM_EPSILON = 3;             // px: closer than this the last valid
 export const ARENA_W = 480, ARENA_H = 270; // finite world in logical pixels, always fully visible
 export const ARENA_MARGIN = 10;           // planes stay this far from the border
 export const ARENA_PAD = 10;              // extra view padding around the arena when fitting the window
-export const MAX_PLAYERS = 4;
 export const TICK_RATE = 30;              // server simulation + snapshot rate (Hz)
 export const INPUT_RATE = 30;             // client input messages per second (max)
 export const INTERP_DELAY = 0.07;         // s: remote entities are rendered slightly in the past (interpolation)
-export const PLAYER_KILL_SCORE = 200;     // points for shooting down another player
+export const PLAYER_KILL_SCORE = 200;     // legacy score for a player kill (FFA ranks by round wins instead)
+// ---- Free For All
+export const WIN_OPTIONS = [5, 10, 15];   // wins needed to take the match (host picks one in the lobby)
+export const DEFAULT_WINS = 5;
+export const MIN_PLAYERS = 2;             // minimum participants for an FFA round
+export const ROUND_RESULTS_TIME = 5;      // s the round scoreboard stays up before the next round
 export const RESPAWN_TIME = 3;            // s (online matches only)
 export const SPAWN_INVULN = 1.5;          // s of invulnerability after (re)spawning online
 export const READY_TIMEOUT = 6000;        // ms the server waits for all clients to load the match

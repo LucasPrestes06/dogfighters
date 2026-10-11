@@ -15,8 +15,11 @@ function parse(s) {
 
 // Buffer of server snapshots + a smoothed estimate of the server clock (separate from the render clock).
 export class Timeline {
-  constructor() { this.snaps = []; this.offset = null; this.lastRecv = 0; }
+  constructor() { this.snaps = []; this.offset = null; this.lastRecv = 0; this.fresh = false; }
+  // New round: forget the old round's snapshots when the first new one arrives (keeps the last frame meanwhile).
+  reset() { this.fresh = true; }
   push(raw) {
+    if (this.fresh) { this.snaps = []; this.offset = null; this.fresh = false; }
     const s = parse(raw), last = this.last();
     if (last && s.t <= last.t) return;                       // duplicate / out-of-order packet: ignore
     this.snaps.push(s); if (this.snaps.length > 30) this.snaps.shift();

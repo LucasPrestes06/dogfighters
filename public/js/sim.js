@@ -1,7 +1,7 @@
 // Shared game simulation. The SERVER runs one Match per room (authoritative); solo mode runs the very same
 // Match locally. Clients only send inputs and render snapshots/events - nothing here is decided by a client.
 import {
-  ARENA_W, ARENA_H, ARENA_MARGIN, MAX_PLAYERS,
+  ARENA_W, ARENA_H, ARENA_MARGIN,
   PLAYER_SPEED, PLAYER_TURN, AIM_EPSILON, PLAYER_HEALTH, PLAYER_RADIUS, INVULN_TIME, SPAWN_INVULN, RESPAWN_TIME, PLAYER_KILL_SCORE,
   FIRE_RATE, MAX_AMMO, RELOAD_TIME, BULLET_SPEED, BULLET_LIFE, BULLET_DAMAGE,
   ENEMY_SPEED, ENEMY_TURN, ENEMY_HP, ENEMY_RADIUS, ENEMY_SCORE, ENEMY_EVADE_DIST, ENEMY_FIRE_COOLDOWN,
@@ -24,8 +24,22 @@ export function stepMovement(s, ax, ay, dt) {
   if (near && (s.x !== nx || s.y !== ny)) s.aimAngle = Math.atan2(ARENA_H / 2 - s.y, ARENA_W / 2 - s.x);
 }
 
+// Start positions for ANY number of players: concentric elliptical rings (outside in), ~34 px between
+// neighbours, everybody facing the arena centre. Rings hold 28 + 18 + 8 planes; beyond that they overlap a bit.
+const RINGS = [[0.40, 0.38], [0.26, 0.25], [0.12, 0.12]];
+const RING_CAP = RINGS.map(([fx, fy]) => { const rx = ARENA_W * fx, ry = ARENA_H * fy; return Math.max(1, Math.floor(TAU * Math.sqrt((rx * rx + ry * ry) / 2) / 34)); });
+export function spawnSlot(i, n) {
+  const cx = ARENA_W / 2, cy = ARENA_H / 2; let before = 0, ring = 0;
+  while (ring < RINGS.length - 1 && i >= before + RING_CAP[ring]) { before += RING_CAP[ring]; ring++; }
+  const cnt = Math.max(1, Math.min(n - before, RING_CAP[ring])), idx = (i - before) % cnt;
+  const a = Math.PI / 4 + idx / cnt * TAU, x = cx + Math.cos(a) * ARENA_W * RINGS[ring][0], y = cy + Math.sin(a) * ARENA_H * RINGS[ring][1];
+  return { x, y, h: Math.atan2(cy - y, cx - x) };
+}
+
 export class Match {
-  constructor({ respawn = false } = {}) {
+  // respawn: online legacy mode. enemies: AI planes (solo). aliveOnly: snapshots omit eliminated players (FFA).
+  constructor({ respawn = false, enemies = true, aliveOnly = false } = {}) {
+    this.enemiesOn = enemies; this.aliveOnly = aliveOnly; this.purge = new Set();
     this.respawn = respawn; this.time = 0; this.nextBullet = 1; this.nextEnemy = 1;
     this.players = new Map(); this.enemies = []; this.bullets = []; this.events = [];
     this.kills = 0; this.spawnT = 1.5;
@@ -33,12 +47,24 @@ export class Match {
   emit(ev) { ev.t = r2(this.time); this.events.push(ev); }
   drainEvents() { const e = this.events; this.events = []; return e; }
 
-  addPlayer(id, nick) {
-    const slot = this.players.size, a = slot / MAX_PLAYERS * TAU + Math.PI / 4, cx = ARENA_W / 2, cy = ARENA_H / 2, r = ARENA_H * 0.3;
-    const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r, h = Math.atan2(cy - y, cx - x);
-    const p = { id, nick, x, y, angle: h, aimAngle: h, hp: PLAYER_HEALTH, ammo: MAX_AMMO, reloading: false, reloadT: 0, fireT: 0,
-      inv: this.respawn ? SPAWN_INVULN : 0, alive: true, deadT: 0, score: 0, kills: 0, inT: 0, in: { x: cx, y: cy, f: 0, s: -1 } };
+  addPlayer(id, nick, slot = 0, total = 1) {
+    const s = spawnSlot(slot, total);
+    const p = { id, nick, x: s.x, y: s.y, angle: s.h, aimAngle: s.h, hp: PLAYER_HEALTH, ammo: MAX_AMMO, reloading: false, reloadT: 0, fireT: 0,
+      inv: this.respawn ? SPAWN_INVULN : 0, alive: true, deadT: 0, score: 0, kills: 0, inT: this.time, in: { x: ARENA_W / 2, y: ARENA_H / 2, f: 0, s: -1 } };
     this.players.set(id, p); return p;
+  }
+  // FFA: wipes bullets/enemies and puts every listed player back, alive, on a fresh start position.
+  // The simulation clock keeps running, so clients never see time go backwards between rounds.
+  startRound(list) {
+    this.bullets = []; this.enemies = []; this.purge = new Set();
+    const ids = new Set(list.map(m => m.id));
+    for (const id of [...this.players.keys()]) if (!ids.has(id)) this.players.delete(id);
+    list.forEach((m, i) => {
+      const s = spawnSlot(i, list.length), old = this.players.get(m.id);
+      this.players.set(m.id, { id: m.id, nick: m.nick, x: s.x, y: s.y, angle: s.h, aimAngle: s.h, hp: PLAYER_HEALTH, ammo: MAX_AMMO,
+        reloading: false, reloadT: 0, fireT: 0, inv: SPAWN_INVULN, alive: true, deadT: 0, score: old ? old.score : 0, kills: old ? old.kills : 0,
+        inT: this.time, in: { x: ARENA_W / 2, y: ARENA_H / 2, f: 0, s: old ? old.in.s : -1 } });
+    });
   }
   removePlayer(id) { this.players.delete(id); }
   // Untrusted input: validated, clamped and de-duplicated by sequence number.
@@ -87,8 +113,9 @@ export class Match {
   }
 
   stepBullets(dt) {
-    const keep = [];
+    const keep = [], purge = this.purge; this.purge = new Set();
     for (const b of this.bullets) {
+      if (!b.en && purge.has(b.o)) { this.emit({ k: 'd', b: b.id }); continue; }
       b.px = b.x; b.py = b.y; b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
       if (b.life <= 0 || b.x < 0 || b.x > ARENA_W || b.y < 0 || b.y > ARENA_H) continue;   // expired / left the arena
       if (!this.bulletHit(b)) keep.push(b);
@@ -118,6 +145,7 @@ export class Match {
     p.hp--; p.inv = INVULN_TIME; this.emit({ k: 'u', id: p.id });
     if (p.hp > 0) return;
     p.alive = false; p.deadT = RESPAWN_TIME;
+    if (!this.respawn) this.purge.add(p.id);                       // an eliminated plane's bullets in flight stop mattering
     this.emit({ k: 'x', v: 'p', id: p.id, x: r1(p.x), y: r1(p.y), by });
     const killer = by && this.players.get(by); if (killer) { killer.score += PLAYER_KILL_SCORE; killer.kills++; }
   }
@@ -153,7 +181,7 @@ export class Match {
   }
   spawnEnemies(dt) {
     const alive = [...this.players.values()].filter(p => p.alive);
-    if (!alive.length || (this.spawnT -= dt) > 0) return;
+    if (!this.enemiesOn || !alive.length || (this.spawnT -= dt) > 0) return;
     if (this.enemies.length >= Math.min(MAX_ENEMIES, 1 + alive.length + Math.floor(this.kills / 4))) return;
     let x = 0, y = 0;                                              // spawn on the arena border, away from players
     for (let i = 0; i < 10; i++) {
@@ -171,7 +199,7 @@ export class Match {
   snapshot() {
     return {
       t: r2(this.time),
-      p: [...this.players.values()].map(p => [p.id, r1(p.x), r1(p.y), r2(p.angle), p.hp, p.ammo, p.reloading ? r2(p.reloadT / RELOAD_TIME) : -1,
+      p: [...this.players.values()].filter(p => p.alive || !this.aliveOnly).map(p => [p.id, r1(p.x), r1(p.y), r2(p.angle), p.hp, p.ammo, p.reloading ? r2(p.reloadT / RELOAD_TIME) : -1,
         p.alive ? 1 : 0, p.score, p.kills, p.inv > 0 ? 1 : 0, p.alive ? 0 : r1(Math.max(0, p.deadT))]),
       e: this.enemies.map(e => [e.id, r1(e.x), r1(e.y), r2(e.angle), e.hp]),
     };
