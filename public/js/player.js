@@ -13,9 +13,9 @@ export class PlaneView {
     this.trails = trails ? [new Trail(TRAIL_LENGTH), new Trail(TRAIL_LENGTH)] : null;
     this.propT = Math.random(); this.acc = 0; this.smokeT = 0; this.x = 0; this.y = 0; this.angle = 0; this.alive = false;
   }
-  set(x, y, angle, alive, inv, hp, dt) {
-    this.x = x; this.y = y; this.angle = angle; this.alive = alive; this.propT += dt;
-    this.img.setVisible(alive && (!inv || ((this.propT * 20) | 0) % 2 === 0)); this.shadow.setVisible(alive);
+  set(x, y, angle, alive, hp, dt) {
+    this.x = x; this.y = y; this.angle = angle; this.alive = alive; this.hp = hp; this.propT += dt;
+    this.img.setVisible(alive); this.shadow.setVisible(alive);                     // purely visual: no blinking, no immunity
     if (alive) {
       const i = angleIndex(angle);
       this.img.setTexture(`${this.pre}_${i}_${(this.propT * 25 | 0) & 1}`).setPosition(Math.round(x), Math.round(y));

@@ -1,12 +1,12 @@
 // Match scene: fixed camera on a finite arena; renders server snapshots (online FFA) or the local Match (solo).
 // Online, the server owns rounds, eliminations, wins and the scoreboard ('g:phase'); this scene only presents them.
-import { W, H, ARENA_W, ARENA_H } from './constants.js';
+import { W, H, ARENA_W, ARENA_H, PLAYER_HEALTH, LOW_HP } from './constants.js';
 import { Effects, Sky } from './effects.js';
 import { BulletPool, OWNER_PLAYER, OWNER_ENEMY } from './bullet.js';
 import { PlaneView, Predictor } from './player.js';
 import { EnemyView } from './enemy.js';
 import { Input } from './input.js';
-import { Hud, drawText, textWidth } from './ui.js';
+import { Hud, drawText, textWidth, drawHpBar } from './ui.js';
 import { drawRoundBoard, drawFinalBoard, PALETTE_COLORS } from './board.js';
 import { Sfx } from './audio.js';
 import { Net } from './net.js';
@@ -133,7 +133,7 @@ export class GameScene extends Phaser.Scene {
 
   planeView(id) {
     let v = this.views.get(id);
-    if (!v) { v = new PlaneView(this, this.pal.get(id) || 'p2', this.fx, true, 2); this.views.set(id, v); }
+    if (!v) { v = new PlaneView(this, this.pal.get(id) || 'p2', this.fx, true, LOW_HP); this.views.set(id, v); }
     return v;
   }
 
@@ -162,21 +162,21 @@ export class GameScene extends Phaser.Scene {
       if (!this.pred.has) this.pred.snap(me);
       this.pred.step(dt, aim.x, aim.y);
       this.pred.reconcile(dt, me, (performance.now() - tl.lastRecv) / 1000 + this.src.lat);
-      mv.set(this.pred.x, this.pred.y, this.pred.angle, true, me.inv, me.hp, dt);
-    } else { this.pred.has = false; mv.set(this.pred.x, this.pred.y, this.pred.angle, false, false, 0, dt); }
+      mv.set(this.pred.x, this.pred.y, this.pred.angle, true, me.hp, dt);
+    } else { this.pred.has = false; mv.set(this.pred.x, this.pred.y, this.pred.angle, false, 0, dt); }
     // Remote planes: interpolated between two snapshots. Not in the snapshot = eliminated this round (hidden).
     for (const id of this.meta.keys()) {
       if (id === this.myId) continue;
       const bs = b.pm.get(id);
-      if (!bs) { const v = this.views.get(id); if (v) v.set(v.x, v.y, v.angle, false, false, 0, dt); continue; }
+      if (!bs) { const v = this.views.get(id); if (v) v.set(v.x, v.y, v.angle, false, 0, dt); continue; }
       const as = a.pm.get(id) || bs;
-      this.planeView(id).set(lerp(as.x, bs.x, k), lerp(as.y, bs.y, k), lerpAng(as.angle, bs.angle, k), bs.alive, bs.inv, bs.hp, dt);
+      this.planeView(id).set(lerp(as.x, bs.x, k), lerp(as.y, bs.y, k), lerpAng(as.angle, bs.angle, k), bs.alive, bs.hp, dt);
     }
     // Enemies exist only in solo mode (simulated by the local Match)
     const seen = new Set();
     const showEnemy = (id, as, bs) => {
       let v = this.enemies.get(id); if (!v) { v = new EnemyView(this, this.fx); this.enemies.set(id, v); }
-      v.set(lerp(as.x, bs.x, k), lerp(as.y, bs.y, k), lerpAng(as.angle, bs.angle, k), true, false, bs.hp, dt); seen.add(id);
+      v.set(lerp(as.x, bs.x, k), lerp(as.y, bs.y, k), lerpAng(as.angle, bs.angle, k), true, bs.hp, dt); seen.add(id);
     };
     for (const [id, bs] of b.em) showEnemy(id, a.em.get(id) || bs, bs);
     if (k < 0.99) for (const [id, as] of a.em) if (!b.em.has(id)) showEnemy(id, as, as);
@@ -188,6 +188,8 @@ export class GameScene extends Phaser.Scene {
     for (const [id, v] of this.views) if (v.alive) {
       const nick = this.meta.get(id) || '?';
       drawText(g, nick, Math.round(v.x - textWidth(nick) / 2), Math.round(v.y) + 13, id === this.myId ? 0x7cfc9a : 0xffffff, 1, 0x0b2a5c);
+      // small HP bar under other players' nicknames, only once they are damaged (keeps crowded arenas readable)
+      if (id !== this.myId && v.hp < PLAYER_HEALTH) drawHpBar(g, Math.round(v.x) - 9, Math.round(v.y) + 20, 18, 2, v.hp, v.hp, v.hp <= LOW_HP && ((now / 250) | 0) % 2 === 0);
     }
 
     // HUD from the authoritative state

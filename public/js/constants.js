@@ -22,16 +22,18 @@ export const DEFAULT_WINS = 5;
 export const MIN_PLAYERS = 2;             // minimum participants for an FFA round
 export const ROUND_RESULTS_TIME = 5;      // s the round scoreboard stays up before the next round
 export const RESPAWN_TIME = 3;            // s (online matches only)
-export const SPAWN_INVULN = 1.5;          // s of invulnerability after (re)spawning online
 export const READY_TIMEOUT = 6000;        // ms the server waits for all clients to load the match
-export const PLAYER_HEALTH = 5;
+// ---- Combat balance: HP is a 0..100 bar. There is NO invulnerability of any kind (no post-hit timer, no spawn shield).
+export const PLAYER_HEALTH = 100;         // HP at the start of every round
+export const DAMAGE_VS_PLAYER = 5;        // HP lost per bullet that hits a plane (player or enemy bullet) - see README "Balance"
+export const DAMAGE_RAM = 20;             // HP lost when an enemy rams a player (solo)
+export const DAMAGE_VS_ENEMY = 1;         // enemy planes have ENEMY_HP hits
+export const LOW_HP = 30;                 // HP at or below which the UI warns (smoke / blinking bar); visual only
 export const PLAYER_RADIUS = 6;
-export const INVULN_TIME = 1.2;           // s
 
 export const BULLET_SPEED = 260;          // px/s
 export const BULLET_LIFE = 0.65;          // s
 export const FIRE_RATE = 0.075;           // s between shots
-export const BULLET_DAMAGE = 1;
 export const MAX_AMMO = 30;
 export const RELOAD_TIME = 2.0;           // s
 export const MAX_BULLETS = 160;

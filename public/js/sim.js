@@ -2,8 +2,8 @@
 // Match locally. Clients only send inputs and render snapshots/events - nothing here is decided by a client.
 import {
   ARENA_W, ARENA_H, ARENA_MARGIN,
-  PLAYER_SPEED, PLAYER_TURN, AIM_EPSILON, PLAYER_HEALTH, PLAYER_RADIUS, INVULN_TIME, SPAWN_INVULN, RESPAWN_TIME, PLAYER_KILL_SCORE,
-  FIRE_RATE, MAX_AMMO, RELOAD_TIME, BULLET_SPEED, BULLET_LIFE, BULLET_DAMAGE,
+  PLAYER_SPEED, PLAYER_TURN, AIM_EPSILON, PLAYER_HEALTH, PLAYER_RADIUS, RESPAWN_TIME, PLAYER_KILL_SCORE, DAMAGE_VS_PLAYER, DAMAGE_RAM, DAMAGE_VS_ENEMY,
+  FIRE_RATE, MAX_AMMO, RELOAD_TIME, BULLET_SPEED, BULLET_LIFE,
   ENEMY_SPEED, ENEMY_TURN, ENEMY_HP, ENEMY_RADIUS, ENEMY_SCORE, ENEMY_EVADE_DIST, ENEMY_FIRE_COOLDOWN,
   ENEMY_BULLET_SPEED, ENEMY_BULLET_LIFE, MAX_ENEMIES,
 } from './constants.js';
@@ -50,7 +50,7 @@ export class Match {
   addPlayer(id, nick, slot = 0, total = 1) {
     const s = spawnSlot(slot, total);
     const p = { id, nick, x: s.x, y: s.y, angle: s.h, aimAngle: s.h, hp: PLAYER_HEALTH, ammo: MAX_AMMO, reloading: false, reloadT: 0, fireT: 0,
-      inv: this.respawn ? SPAWN_INVULN : 0, alive: true, deadT: 0, score: 0, kills: 0, inT: this.time, in: { x: ARENA_W / 2, y: ARENA_H / 2, f: 0, s: -1 } };
+      alive: true, deadT: 0, score: 0, kills: 0, inT: this.time, in: { x: ARENA_W / 2, y: ARENA_H / 2, f: 0, s: -1 } };
     this.players.set(id, p); return p;
   }
   // FFA: wipes bullets/enemies and puts every listed player back, alive, on a fresh start position.
@@ -62,7 +62,7 @@ export class Match {
     list.forEach((m, i) => {
       const s = spawnSlot(i, list.length), old = this.players.get(m.id);
       this.players.set(m.id, { id: m.id, nick: m.nick, x: s.x, y: s.y, angle: s.h, aimAngle: s.h, hp: PLAYER_HEALTH, ammo: MAX_AMMO,
-        reloading: false, reloadT: 0, fireT: 0, inv: SPAWN_INVULN, alive: true, deadT: 0, score: old ? old.score : 0, kills: old ? old.kills : 0,
+        reloading: false, reloadT: 0, fireT: 0, alive: true, deadT: 0, score: old ? old.score : 0, kills: old ? old.kills : 0,
         inT: this.time, in: { x: ARENA_W / 2, y: ARENA_H / 2, f: 0, s: old ? old.in.s : -1 } });
     });
   }
@@ -86,7 +86,6 @@ export class Match {
 
   stepPlayer(p, dt) {
     if (!p.alive) { if (this.respawn && (p.deadT -= dt) <= 0) this.respawnPlayer(p); return; }
-    p.inv = Math.max(0, p.inv - dt);
     stepMovement(p, p.in.x, p.in.y, dt);
     if (this.time - p.inT > 1.5) p.in.f = 0;                        // stale input (tab hidden / lag): stop firing
     p.fireT = Math.max(p.fireT - dt, -dt);
@@ -101,7 +100,7 @@ export class Match {
   }
   respawnPlayer(p) {
     const x = rand(40, ARENA_W - 40), y = rand(40, ARENA_H - 40), h = Math.atan2(ARENA_H / 2 - y, ARENA_W / 2 - x);
-    Object.assign(p, { x, y, angle: h, aimAngle: h, hp: PLAYER_HEALTH, ammo: MAX_AMMO, reloading: false, reloadT: 0, fireT: 0, inv: SPAWN_INVULN, alive: true });
+    Object.assign(p, { x, y, angle: h, aimAngle: h, hp: PLAYER_HEALTH, ammo: MAX_AMMO, reloading: false, reloadT: 0, fireT: 0, alive: true });
     this.emit({ k: 's', id: p.id });
   }
 
@@ -127,22 +126,24 @@ export class Match {
       for (const e of this.enemies) {
         if (e.dead || segDist(b.px, b.py, b.x, b.y, e.x, e.y) >= ENEMY_RADIUS + 1) continue;
         this.emit({ k: 'h', b: b.id, x: r1(b.x), y: r1(b.y), s: b.o });
-        e.hp -= BULLET_DAMAGE; if (e.hp <= 0) this.killEnemy(e, b.o);
+        e.hp -= DAMAGE_VS_ENEMY; if (e.hp <= 0) this.killEnemy(e, b.o);
         return true;
       }
     }
     for (const p of this.players.values()) {
       if (!p.alive || p.id === b.o || segDist(b.px, b.py, b.x, b.y, p.x, p.y) >= PLAYER_RADIUS + 1) continue;
       this.emit({ k: 'h', b: b.id, x: r1(b.x), y: r1(b.y), s: b.o });
-      this.hurtPlayer(p, b.en ? null : b.o);
+      this.hurtPlayer(p, b.en ? null : b.o, DAMAGE_VS_PLAYER);
       return true;
     }
     return false;
   }
 
-  hurtPlayer(p, by) {
-    if (!p.alive || p.inv > 0) return;                            // invulnerable planes absorb the bullet
-    p.hp--; p.inv = INVULN_TIME; this.emit({ k: 'u', id: p.id });
+  // Every valid hit costs HP immediately: no invulnerability, no cooldown. Only a dead plane can't be hurt again,
+  // so an elimination is emitted exactly once. HP is clamped to 0..PLAYER_HEALTH.
+  hurtPlayer(p, by, dmg) {
+    if (!p.alive) return;
+    p.hp = Math.max(0, Math.min(PLAYER_HEALTH, p.hp - dmg)); this.emit({ k: 'u', id: p.id });
     if (p.hp > 0) return;
     p.alive = false; p.deadT = RESPAWN_TIME;
     if (!this.respawn) this.purge.add(p.id);                       // an eliminated plane's bullets in flight stop mattering
@@ -172,10 +173,10 @@ export class Match {
   }
   ram() {
     for (const p of this.players.values()) {
-      if (!p.alive || p.inv > 0) continue;
+      if (!p.alive) continue;
       for (const e of this.enemies) {
         if (e.dead || Math.hypot(e.x - p.x, e.y - p.y) >= ENEMY_RADIUS + PLAYER_RADIUS - 2) continue;
-        this.hurtPlayer(p, null); this.killEnemy(e, null); break;
+        this.hurtPlayer(p, null, DAMAGE_RAM); this.killEnemy(e, null); break;
       }
     }
   }
@@ -200,7 +201,7 @@ export class Match {
     return {
       t: r2(this.time),
       p: [...this.players.values()].filter(p => p.alive || !this.aliveOnly).map(p => [p.id, r1(p.x), r1(p.y), r2(p.angle), p.hp, p.ammo, p.reloading ? r2(p.reloadT / RELOAD_TIME) : -1,
-        p.alive ? 1 : 0, p.score, p.kills, p.inv > 0 ? 1 : 0, p.alive ? 0 : r1(Math.max(0, p.deadT))]),
+        p.alive ? 1 : 0, p.score, p.kills, p.alive ? 0 : r1(Math.max(0, p.deadT))]),
       e: this.enemies.map(e => [e.id, r1(e.x), r1(e.y), r2(e.angle), e.hp]),
     };
   }

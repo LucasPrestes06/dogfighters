@@ -1,5 +1,5 @@
 // Pixel font (3x5), HUD, menu and game-over scenes.
-import { W, H, MAX_AMMO, PLAYER_HEALTH } from './constants.js';
+import { W, H, MAX_AMMO, PLAYER_HEALTH, LOW_HP } from './constants.js';
 import { Sky } from './effects.js';
 import { Sfx } from './audio.js';
 import { Net } from './net.js';
@@ -36,19 +36,31 @@ export function drawButton(g, label, cx, cy, w, h, hover) {
   drawText(g, label, Math.round(cx - textWidth(label, 2) / 2), cy - 5, 0xffffff, 2, 0x3a0e3a);
 }
 
+// Red pixel HP bar. The filled part IS the real HP (1 px per HP when w = 100); `trail` (dark red) shows the HP
+// that was just lost and drains away. `warn` makes the fill pulse (visual only, never affects combat).
+export function drawHpBar(g, x, y, w, h, hp, trail, warn) {
+  const px = v => Math.round(w * Math.max(0, Math.min(PLAYER_HEALTH, v)) / PLAYER_HEALTH);
+  g.fillStyle(0x3a0e3a, 1); g.fillRect(x - 1, y - 1, w + 2, h + 2);          // pixel outline
+  g.fillStyle(0x2a1a3a, 1); g.fillRect(x, y, w, h);                           // empty part
+  if (trail > hp) { g.fillStyle(0x8a1650, 1); g.fillRect(x, y, px(trail), h); }
+  g.fillStyle(warn ? 0xff6a6a : 0xe8173c, 1); g.fillRect(x, y, px(hp), h);
+  if (h >= 5) { g.fillStyle(0xff8a8a, 1); g.fillRect(x, y, px(hp), 1); }      // highlight row
+}
+
 export class Hud {
-  constructor(scene) { this.g = scene.add.graphics().setScrollFactor(0).setDepth(100); }
+  constructor(scene) { this.g = scene.add.graphics().setScrollFactor(0).setDepth(100); this.trail = PLAYER_HEALTH; this.lastT = null; }
   // x = { board: [[nick, score, isMe]...], banner: [lines], feed: [lines] } (all optional)
   draw(p, score, kills, t, x = {}) {
     const g = this.g; g.clear();
     drawText(g, x.scoreText || `SCORE: ${pad(score)}`, 6, 6, 0xffffff, 1, 0x0b2a5c);
     drawText(g, x.killsText || `KILLS: ${kills}`, 6, 14, 0xffd21f, 1, 0x0b2a5c);
-    drawText(g, 'HP', W - 8 - PLAYER_HEALTH * 9 - 12, 6, 0xffffff, 1, 0x0b2a5c);
-    for (let i = 0; i < PLAYER_HEALTH; i++) {
-      const x = W - 6 - (PLAYER_HEALTH - i) * 9 + 2;
-      g.fillStyle(0x3a0e3a, 1); g.fillRect(x - 1, 5, 8, 8);
-      g.fillStyle(i < p.hp ? 0xe8173c : 0x5a3a6a, 1); g.fillRect(x, 6, 6, 6);
-    }
+    // 100 HP bar (replaces the old heart row). Fill = server HP; the trail only decorates recent damage.
+    const dt = this.lastT === null ? 0 : Math.min(0.1, Math.max(0, t - this.lastT)); this.lastT = t;
+    this.trail = p.hp >= this.trail ? p.hp : Math.max(p.hp, this.trail - 60 * dt);
+    const hpTxt = String(Math.ceil(p.hp)), barW = 100, bx = W - 6 - barW - 4 - textWidth('100'), warn = p.hp > 0 && p.hp <= LOW_HP && ((t * 4) | 0) % 2 === 0;
+    drawText(g, 'HP', bx - 12, 6, 0xffffff, 1, 0x0b2a5c);
+    drawHpBar(g, bx, 6, barW, 6, p.hp, this.trail, warn);
+    drawText(g, hpTxt, W - 6 - textWidth(hpTxt), 6, p.hp <= LOW_HP ? 0xff5a5a : 0xffffff, 1, 0x0b2a5c);
     drawText(g, `AMMO: ${p.ammo}/${MAX_AMMO}`, 6, H - 26, p.ammo <= 5 ? 0xff5a5a : 0xffffff, 1, 0x0b2a5c);
     if (p.reloading && ((t * 4) | 0) % 2 === 0) drawText(g, 'RELOADING...', 6, H - 19, 0xffd21f, 1, 0x0b2a5c);
     const bw = 60, fill = p.reloading ? p.reloadProgress : p.ammo / MAX_AMMO;

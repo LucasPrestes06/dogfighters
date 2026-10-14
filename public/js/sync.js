@@ -8,7 +8,7 @@ const nowS = () => performance.now() / 1000;
 
 function parse(s) {
   const pm = new Map(), em = new Map();
-  for (const a of s.p) pm.set(a[0], { x: a[1], y: a[2], angle: a[3], hp: a[4], ammo: a[5], rl: a[6], alive: a[7] === 1, score: a[8], kills: a[9], inv: a[10] === 1, rt: a[11] });
+  for (const a of s.p) pm.set(a[0], { x: a[1], y: a[2], angle: a[3], hp: a[4], ammo: a[5], rl: a[6], alive: a[7] === 1, score: a[8], kills: a[9], rt: a[10] });
   for (const a of s.e) em.set(a[0], { x: a[1], y: a[2], angle: a[3], hp: a[4] });
   return { t: s.t, pm, em };
 }

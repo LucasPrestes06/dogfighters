@@ -1,6 +1,6 @@
 {
   "name": "dogfighters",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "DOGFIGHTERS - pixel art air combat game (Phaser 3 + Express)",
   "main": "server.js",
   "scripts": {
