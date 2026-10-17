@@ -153,16 +153,16 @@ export class GameScene extends Phaser.Scene {
     }
 
     const aim = this.keys.worldAim(this.aim);                      // screen -> world (camera is fixed, zoom is 1)
-    if (!this.online || this.phase === 'ROUND_ACTIVE') this.src.sendInput(aim.x, aim.y, this.keys.fire);
+    if (!this.online || this.phase === 'ROUND_ACTIVE') this.src.sendInput(aim.x, aim.y, this.keys.fire, this.keys.boost);
     const rt = tl.renderTime(), { a, b, k } = tl.pair(rt), last = tl.last(), me = last.pm.get(this.myId);
 
     // Local plane: predicted every frame, corrected toward the server state. Eliminated players have no entry.
     const mv = this.planeView(this.myId);
     if (me && me.alive) {
       if (!this.pred.has) this.pred.snap(me);
-      this.pred.step(dt, aim.x, aim.y);
+      this.pred.step(dt, aim.x, aim.y, this.keys.boost && (!this.online || this.phase === 'ROUND_ACTIVE'));
       this.pred.reconcile(dt, me, (performance.now() - tl.lastRecv) / 1000 + this.src.lat);
-      mv.set(this.pred.x, this.pred.y, this.pred.angle, true, me.hp, dt);
+      mv.set(this.pred.x, this.pred.y, this.pred.angle, true, me.hp, dt, this.pred.bs.boosting);
     } else { this.pred.has = false; mv.set(this.pred.x, this.pred.y, this.pred.angle, false, 0, dt); }
     // Remote planes: interpolated between two snapshots. Not in the snapshot = eliminated this round (hidden).
     for (const id of this.meta.keys()) {
@@ -170,7 +170,7 @@ export class GameScene extends Phaser.Scene {
       const bs = b.pm.get(id);
       if (!bs) { const v = this.views.get(id); if (v) v.set(v.x, v.y, v.angle, false, 0, dt); continue; }
       const as = a.pm.get(id) || bs;
-      this.planeView(id).set(lerp(as.x, bs.x, k), lerp(as.y, bs.y, k), lerpAng(as.angle, bs.angle, k), bs.alive, bs.hp, dt);
+      this.planeView(id).set(lerp(as.x, bs.x, k), lerp(as.y, bs.y, k), lerpAng(as.angle, bs.angle, k), bs.alive, bs.hp, dt, bs.boosting);
     }
     // Enemies exist only in solo mode (simulated by the local Match)
     const seen = new Set();
@@ -193,7 +193,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     // HUD from the authoritative state
-    const hudMe = me ? { hp: me.hp, ammo: me.ammo, reloading: me.rl >= 0, reloadProgress: me.rl >= 0 ? me.rl : 1 } : { hp: 0, ammo: 0, reloading: false, reloadProgress: 1 };
+    const bst = this.pred.bs;                         // predicted energy, kept in line with the server's (me.en)
+    const hudMe = me ? { hp: me.hp, ammo: me.ammo, reloading: me.rl >= 0, reloadProgress: me.rl >= 0 ? me.rl : 1, en: me.alive ? bst.energy : me.en, boosting: me.alive && bst.boosting, bLocked: me.alive ? bst.locked : me.locked }
+      : { hp: 0, ammo: 0, reloading: false, reloadProgress: 1, en: 0, boosting: false, bLocked: false };
     if (me && me.alive) {
       if (hudMe.reloading && !this.prevReload) Sfx.play('reload');
       if (!hudMe.reloading && this.prevReload) Sfx.play('reloadDone');

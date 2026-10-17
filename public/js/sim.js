@@ -6,6 +6,7 @@ import {
   FIRE_RATE, MAX_AMMO, RELOAD_TIME, BULLET_SPEED, BULLET_LIFE,
   ENEMY_SPEED, ENEMY_TURN, ENEMY_HP, ENEMY_RADIUS, ENEMY_SCORE, ENEMY_EVADE_DIST, ENEMY_FIRE_COOLDOWN,
   ENEMY_BULLET_SPEED, ENEMY_BULLET_LIFE, MAX_ENEMIES,
+  BOOST_MAX_ENERGY, BOOST_SPEED_MULTIPLIER, BOOST_DRAIN_RATE, BOOST_RECHARGE_DELAY, BOOST_RECHARGE_RATE, BOOST_EXHAUST_DELAY, BOOST_REARM_ENERGY,
 } from './constants.js';
 import { wrapPi, clamp, segDist, rand, TAU } from './utils.js';
 
@@ -13,15 +14,33 @@ const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100;
 
 // Constant-speed flight: the aim only decides the DIRECTION. Also used by the client for local prediction.
 // The plane is kept inside the arena; at a wall it slides along it.
-export function stepMovement(s, ax, ay, dt) {
+// `speed` is the current speed in px/s (PLAYER_SPEED, or PLAYER_SPEED x multiplier while boosting).
+export function stepMovement(s, ax, ay, dt, speed = PLAYER_SPEED) {
   ax = clamp(ax, ARENA_MARGIN, ARENA_W - ARENA_MARGIN); ay = clamp(ay, ARENA_MARGIN, ARENA_H - ARENA_MARGIN);
   const dx = ax - s.x, dy = ay - s.y, near = dx * dx + dy * dy <= AIM_EPSILON * AIM_EPSILON;
   if (!near) s.aimAngle = Math.atan2(dy, dx);                   // else keep the last valid direction
   s.angle = wrapPi(s.angle + clamp(wrapPi(s.aimAngle - s.angle), -PLAYER_TURN * dt, PLAYER_TURN * dt));
-  const nx = s.x + Math.cos(s.angle) * PLAYER_SPEED * dt, ny = s.y + Math.sin(s.angle) * PLAYER_SPEED * dt;
+  const nx = s.x + Math.cos(s.angle) * speed * dt, ny = s.y + Math.sin(s.angle) * speed * dt;
   s.x = clamp(nx, ARENA_MARGIN, ARENA_W - ARENA_MARGIN); s.y = clamp(ny, ARENA_MARGIN, ARENA_H - ARENA_MARGIN);
   // pressed against a wall with the aim right on the border: turn back toward the arena instead of sticking
   if (near && (s.x !== nx || s.y !== ny)) s.aimAngle = Math.atan2(ARENA_H / 2 - s.y, ARENA_W / 2 - s.x);
+}
+
+// ---- Boost energy: ONE state machine shared by the server (authority), solo mode and client prediction.
+// b = { energy, boosting, locked, delay }. Holding SPACE drains energy; releasing keeps what is left and recharges
+// after BOOST_RECHARGE_DELAY; hitting 0 locks the boost (cooldown) until the bar refills to BOOST_REARM_ENERGY.
+export const newBoost = () => ({ energy: BOOST_MAX_ENERGY, boosting: false, locked: false, delay: 0 });
+export const boostSpeed = b => PLAYER_SPEED * (b.boosting ? BOOST_SPEED_MULTIPLIER : 1);
+export function stepBoost(b, want, dt) {
+  if (want && !b.locked && b.energy > 0) {
+    b.boosting = true; b.delay = BOOST_RECHARGE_DELAY;
+    b.energy = Math.max(0, b.energy - BOOST_DRAIN_RATE * dt);
+    if (b.energy <= 0) { b.boosting = false; b.locked = true; b.delay = BOOST_EXHAUST_DELAY; }   // exhausted: cooldown
+    return;
+  }
+  b.boosting = false;
+  if ((b.delay = Math.max(0, b.delay - dt)) <= 0) b.energy = Math.min(BOOST_MAX_ENERGY, b.energy + BOOST_RECHARGE_RATE * dt);
+  if (b.locked && b.energy >= BOOST_REARM_ENERGY) b.locked = false;
 }
 
 // Start positions for ANY number of players: concentric elliptical rings (outside in), ~34 px between
@@ -50,7 +69,7 @@ export class Match {
   addPlayer(id, nick, slot = 0, total = 1) {
     const s = spawnSlot(slot, total);
     const p = { id, nick, x: s.x, y: s.y, angle: s.h, aimAngle: s.h, hp: PLAYER_HEALTH, ammo: MAX_AMMO, reloading: false, reloadT: 0, fireT: 0,
-      alive: true, deadT: 0, score: 0, kills: 0, inT: this.time, in: { x: ARENA_W / 2, y: ARENA_H / 2, f: 0, s: -1 } };
+      alive: true, deadT: 0, score: 0, kills: 0, inT: this.time, boost: newBoost(), in: { x: ARENA_W / 2, y: ARENA_H / 2, f: 0, b: 0, s: -1 } };
     this.players.set(id, p); return p;
   }
   // FFA: wipes bullets/enemies and puts every listed player back, alive, on a fresh start position.
@@ -63,7 +82,7 @@ export class Match {
       const s = spawnSlot(i, list.length), old = this.players.get(m.id);
       this.players.set(m.id, { id: m.id, nick: m.nick, x: s.x, y: s.y, angle: s.h, aimAngle: s.h, hp: PLAYER_HEALTH, ammo: MAX_AMMO,
         reloading: false, reloadT: 0, fireT: 0, alive: true, deadT: 0, score: old ? old.score : 0, kills: old ? old.kills : 0,
-        inT: this.time, in: { x: ARENA_W / 2, y: ARENA_H / 2, f: 0, s: old ? old.in.s : -1 } });
+        inT: this.time, boost: newBoost(), in: { x: ARENA_W / 2, y: ARENA_H / 2, f: 0, b: 0, s: old ? old.in.s : -1 } });   // boost back to 100%
     });
   }
   removePlayer(id) { this.players.delete(id); }
@@ -71,7 +90,7 @@ export class Match {
   setInput(id, d) {
     const p = this.players.get(id);
     if (!p || !d || !Number.isFinite(d.x) || !Number.isFinite(d.y) || !Number.isInteger(d.s) || d.s <= p.in.s) return;
-    p.in.s = d.s; p.in.x = clamp(d.x, 0, ARENA_W); p.in.y = clamp(d.y, 0, ARENA_H); p.in.f = d.f ? 1 : 0; p.inT = this.time;
+    p.in.s = d.s; p.in.x = clamp(d.x, 0, ARENA_W); p.in.y = clamp(d.y, 0, ARENA_H); p.in.f = d.f ? 1 : 0; p.in.b = d.b ? 1 : 0; p.inT = this.time;   // only intents are read; speed/energy fields are never trusted
   }
 
   step(dt) {
@@ -86,8 +105,9 @@ export class Match {
 
   stepPlayer(p, dt) {
     if (!p.alive) { if (this.respawn && (p.deadT -= dt) <= 0) this.respawnPlayer(p); return; }
-    stepMovement(p, p.in.x, p.in.y, dt);
-    if (this.time - p.inT > 1.5) p.in.f = 0;                        // stale input (tab hidden / lag): stop firing
+    if (this.time - p.inT > 1.5) { p.in.f = 0; p.in.b = 0; }        // stale input (tab hidden / lag): stop firing and boosting
+    stepBoost(p.boost, p.in.b === 1, dt);                            // server decides if the boost is really active
+    stepMovement(p, p.in.x, p.in.y, dt, boostSpeed(p.boost));       // same movement + arena clamp, just a different speed
     p.fireT = Math.max(p.fireT - dt, -dt);
     if (p.reloading) {
       p.reloadT += dt;
@@ -100,6 +120,7 @@ export class Match {
   }
   respawnPlayer(p) {
     const x = rand(40, ARENA_W - 40), y = rand(40, ARENA_H - 40), h = Math.atan2(ARENA_H / 2 - y, ARENA_W / 2 - x);
+    p.boost = newBoost();
     Object.assign(p, { x, y, angle: h, aimAngle: h, hp: PLAYER_HEALTH, ammo: MAX_AMMO, reloading: false, reloadT: 0, fireT: 0, alive: true });
     this.emit({ k: 's', id: p.id });
   }
@@ -145,7 +166,7 @@ export class Match {
     if (!p.alive) return;
     p.hp = Math.max(0, Math.min(PLAYER_HEALTH, p.hp - dmg)); this.emit({ k: 'u', id: p.id });
     if (p.hp > 0) return;
-    p.alive = false; p.deadT = RESPAWN_TIME;
+    p.alive = false; p.deadT = RESPAWN_TIME; p.boost.boosting = false;   // eliminated: boost off, no more drain/recharge (stepPlayer skips dead planes)
     if (!this.respawn) this.purge.add(p.id);                       // an eliminated plane's bullets in flight stop mattering
     this.emit({ k: 'x', v: 'p', id: p.id, x: r1(p.x), y: r1(p.y), by });
     const killer = by && this.players.get(by); if (killer) { killer.score += PLAYER_KILL_SCORE; killer.kills++; }
@@ -201,7 +222,8 @@ export class Match {
     return {
       t: r2(this.time),
       p: [...this.players.values()].filter(p => p.alive || !this.aliveOnly).map(p => [p.id, r1(p.x), r1(p.y), r2(p.angle), p.hp, p.ammo, p.reloading ? r2(p.reloadT / RELOAD_TIME) : -1,
-        p.alive ? 1 : 0, p.score, p.kills, p.alive ? 0 : r1(Math.max(0, p.deadT))]),
+        p.alive ? 1 : 0, p.score, p.kills, p.alive ? 0 : r1(Math.max(0, p.deadT)),
+        r1(p.boost.energy), p.boost.boosting ? 1 : 0, p.boost.locked ? 1 : 0]),
       e: this.enemies.map(e => [e.id, r1(e.x), r1(e.y), r2(e.angle), e.hp]),
     };
   }

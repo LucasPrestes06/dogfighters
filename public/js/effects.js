@@ -18,6 +18,12 @@ export class Effects {
   muzzle(x, y, ang) {
     for (let i = 0; i < 3; i++) this.emit(x + Math.cos(ang) * i * 2, y + Math.sin(ang) * i * 2, 0, 0, 0.06, [0xffffff, 0xffd21f], 2 - (i > 0 ? 1 : 0));
   }
+  // Boost exhaust: a few white/blue pixels streaming backwards from the tail (cosmetic only).
+  boost(x, y, ang) {
+    const bx = -Math.cos(ang), by = -Math.sin(ang);
+    for (let i = 0; i < 2; i++) { const j = rand(-3, 3), v = rand(30, 70);
+      this.emit(x + bx * 8 - by * j, y + by * 8 + bx * j, bx * v, by * v, rand(0.12, 0.24), [0xffffff, 0xcfe8ff, 0x6fb8f0], 2 - i, 1.5); }
+  }
   hit(x, y) { for (let i = 0; i < 5; i++) { const a = rand(0, 6.28), v = rand(20, 60); this.emit(x, y, Math.cos(a) * v, Math.sin(a) * v, rand(0.1, 0.25), [0xffffff, 0xffd21f, 0xff8a1f], 1); } }
   smoke(x, y) { this.emit(x, y, rand(-6, 6), rand(-6, 6), rand(0.5, 0.9), [0xe8eefc, 0xa9b3c9, 0x6b7390], 2); }
   explosion(x, y) {

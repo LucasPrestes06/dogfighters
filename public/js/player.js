@@ -1,7 +1,7 @@
 // Plane rendering (local + remote players) and client-side prediction of the local plane.
-import { TRAIL_LENGTH, ARENA_W, ARENA_H, ARENA_MARGIN, PLAYER_SPEED } from './constants.js';
+import { TRAIL_LENGTH, ARENA_W, ARENA_H, ARENA_MARGIN, PLAYER_SPEED, BOOST_SPEED_MULTIPLIER, BOOST_MAX_ENERGY } from './constants.js';
 import { Trail } from './effects.js';
-import { stepMovement } from './sim.js';
+import { stepMovement, stepBoost, newBoost, boostSpeed } from './sim.js';
 import { angleIndex, wrapPi, clamp } from './utils.js';
 
 // Sprite + shadow + optional contrails + damage smoke. Pure view: it never decides anything about the match.
@@ -11,15 +11,16 @@ export class PlaneView {
     this.shadow = scene.add.image(0, 0, 'sh_0').setDepth(5);
     this.img = scene.add.image(0, 0, `${pre}_0_0`).setDepth(10);
     this.trails = trails ? [new Trail(TRAIL_LENGTH), new Trail(TRAIL_LENGTH)] : null;
-    this.propT = Math.random(); this.acc = 0; this.smokeT = 0; this.x = 0; this.y = 0; this.angle = 0; this.alive = false;
+    this.propT = Math.random(); this.acc = 0; this.smokeT = 0; this.boostT = 0; this.boosting = false; this.x = 0; this.y = 0; this.angle = 0; this.alive = false;
   }
-  set(x, y, angle, alive, hp, dt) {
-    this.x = x; this.y = y; this.angle = angle; this.alive = alive; this.hp = hp; this.propT += dt;
+  set(x, y, angle, alive, hp, dt, boosting = false) {
+    this.x = x; this.y = y; this.angle = angle; this.alive = alive; this.hp = hp; this.propT += dt; this.boosting = alive && boosting;
     this.img.setVisible(alive); this.shadow.setVisible(alive);                     // purely visual: no blinking, no immunity
     if (alive) {
       const i = angleIndex(angle);
       this.img.setTexture(`${this.pre}_${i}_${(this.propT * 25 | 0) & 1}`).setPosition(Math.round(x), Math.round(y));
       this.shadow.setTexture(`sh_${i}`).setPosition(Math.round(x) + 6, Math.round(y) + 9);
+      if (boosting && (this.boostT -= dt) <= 0) { this.boostT = 0.03; this.fx.boost(x, y, angle); }   // speed effect, also on remote planes
       if (hp <= this.lowHp && (this.smokeT -= dt) <= 0) { this.smokeT = 0.07; this.fx.smoke(x - Math.cos(angle) * 6, y - Math.sin(angle) * 6); }
     }
     if (!this.trails) return;
@@ -36,15 +37,21 @@ export class PlaneView {
 // Local prediction: the plane responds instantly using the SAME movement rules as the server, then is
 // gently pulled toward the (latency-compensated) authoritative position so it never drifts.
 export class Predictor {
-  constructor() { this.x = 0; this.y = 0; this.angle = 0; this.aimAngle = 0; this.has = false; }
-  snap(s) { this.x = s.x; this.y = s.y; this.angle = s.angle; this.aimAngle = s.angle; this.has = true; }
-  step(dt, ax, ay) { stepMovement(this, ax, ay, dt); }
+  constructor() { this.x = 0; this.y = 0; this.angle = 0; this.aimAngle = 0; this.has = false; this.bs = newBoost(); }
+  snap(s) {
+    this.x = s.x; this.y = s.y; this.angle = s.angle; this.aimAngle = s.angle; this.has = true;
+    this.bs = { energy: s.en === undefined ? BOOST_MAX_ENERGY : s.en, boosting: !!s.boosting, locked: !!s.locked, delay: 0 };
+  }
+  // Same boost state machine and movement code as the server; `want` = SPACE held.
+  step(dt, ax, ay, want) { stepBoost(this.bs, want, dt); stepMovement(this, ax, ay, dt, boostSpeed(this.bs)); }
   reconcile(dt, s, ahead) {
-    const t = { x: clamp(s.x + Math.cos(s.angle) * PLAYER_SPEED * ahead, ARENA_MARGIN, ARENA_W - ARENA_MARGIN),
-                y: clamp(s.y + Math.sin(s.angle) * PLAYER_SPEED * ahead, ARENA_MARGIN, ARENA_H - ARENA_MARGIN) };
+    const sp = PLAYER_SPEED * (s.boosting ? BOOST_SPEED_MULTIPLIER : 1);          // the server's speed, boost included
+    const t = { x: clamp(s.x + Math.cos(s.angle) * sp * ahead, ARENA_MARGIN, ARENA_W - ARENA_MARGIN),
+                y: clamp(s.y + Math.sin(s.angle) * sp * ahead, ARENA_MARGIN, ARENA_H - ARENA_MARGIN) };
     const ex = t.x - this.x, ey = t.y - this.y;
     if (Math.hypot(ex, ey) > 40) { this.snap(s); this.x = t.x; this.y = t.y; return; }  // large error: snap
     const k = Math.min(1, dt * 6);                                                        // small error: blend
+    if (s.en !== undefined) { this.bs.energy += (s.en - this.bs.energy) * Math.min(1, dt * 3); this.bs.locked = !!s.locked; }   // energy follows the server
     this.x += ex * k; this.y += ey * k; this.angle = wrapPi(this.angle + wrapPi(s.angle - this.angle) * k);
   }
 }

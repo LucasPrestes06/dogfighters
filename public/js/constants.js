@@ -6,6 +6,14 @@ export const ANGLES = 16;                 // pre-rendered plane rotations
 
 export const PLAYER_SPEED = 88;           // px/s, CONSTANT while flying
 export const PLAYER_TURN = 8;             // rad/s: how fast the heading swings toward the crosshair
+// ---- Boost (hold SPACE). Server-authoritative; the client only sends the intent (see README "Boost").
+export const BOOST_MAX_ENERGY = 100;      // full bar (units)
+export const BOOST_SPEED_MULTIPLIER = 1.6; // x PLAYER_SPEED while boosting (88 -> 140.8 px/s); the normal speed is never changed
+export const BOOST_DRAIN_RATE = 33.3;     // units/s while boosting  => ~3.0 s of boost with a full bar
+export const BOOST_RECHARGE_DELAY = 0.8;  // s after releasing SPACE before energy starts coming back
+export const BOOST_RECHARGE_RATE = 20;    // units/s once recharging (empty -> full in 5 s)
+export const BOOST_EXHAUST_DELAY = 1.5;   // s of dead time after the bar hits 0 (longer than the normal delay)
+export const BOOST_REARM_ENERGY = 30;     // after hitting 0 the boost stays locked until the bar refills to this value
 export const AIM_EPSILON = 3;             // px: closer than this the last valid direction is kept
 
 // ---- Arena & multiplayer (shared by the server and every client)

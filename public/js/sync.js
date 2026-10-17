@@ -8,7 +8,7 @@ const nowS = () => performance.now() / 1000;
 
 function parse(s) {
   const pm = new Map(), em = new Map();
-  for (const a of s.p) pm.set(a[0], { x: a[1], y: a[2], angle: a[3], hp: a[4], ammo: a[5], rl: a[6], alive: a[7] === 1, score: a[8], kills: a[9], rt: a[10] });
+  for (const a of s.p) pm.set(a[0], { x: a[1], y: a[2], angle: a[3], hp: a[4], ammo: a[5], rl: a[6], alive: a[7] === 1, score: a[8], kills: a[9], rt: a[10], en: a[11], boosting: a[12] === 1, locked: a[13] === 1 });
   for (const a of s.e) em.set(a[0], { x: a[1], y: a[2], angle: a[3], hp: a[4] });
   return { t: s.t, pm, em };
 }
@@ -42,7 +42,7 @@ export class Timeline {
 export class NetSource {
   constructor(net, myId) {
     this.net = net; this.myId = myId; this.tl = new Timeline(); this.lat = 0.05; this.seq = 0;
-    this.sendT = 0; this.lastF = 0; this.pingT = 0; this.onEvent = null;
+    this.sendT = 0; this.lastF = 0; this.lastB = 0; this.pingT = 0; this.onEvent = null;
     this.onS = s => this.tl.push(s);
     this.onE = list => { if (Array.isArray(list) && this.onEvent) for (const e of list) this.onEvent(e); };
     net.socket.on('g:s', this.onS); net.socket.on('g:e', this.onE);
@@ -52,11 +52,11 @@ export class NetSource {
     this.pingT = 2; const t = Date.now();
     this.net.socket.emit('png', t, () => { this.lat += ((Date.now() - t) / 2000 - this.lat) * 0.3; }); // one-way latency (s)
   }
-  sendInput(ax, ay, fire) {
-    const now = performance.now(), f = fire ? 1 : 0;
-    if (f === this.lastF && now - this.sendT < 1000 / INPUT_RATE) return;     // throttled; fire changes go out at once
-    this.sendT = now; this.lastF = f;
-    this.net.socket.volatile.emit('in', { s: ++this.seq, x: Math.round(ax * 10) / 10, y: Math.round(ay * 10) / 10, f });
+  sendInput(ax, ay, fire, boost) {
+    const now = performance.now(), f = fire ? 1 : 0, b = boost ? 1 : 0;
+    if (f === this.lastF && b === this.lastB && now - this.sendT < 1000 / INPUT_RATE) return;   // throttled; fire/boost changes go out at once
+    this.sendT = now; this.lastF = f; this.lastB = b;
+    this.net.socket.volatile.emit('in', { s: ++this.seq, x: Math.round(ax * 10) / 10, y: Math.round(ay * 10) / 10, f, b });
   }
   close() { this.net.socket.off('g:s', this.onS); this.net.socket.off('g:e', this.onE); }
 }
@@ -75,6 +75,6 @@ export class LocalSource {
       for (const e of this.match.drainEvents()) if (this.onEvent) this.onEvent(e);
     }
   }
-  sendInput(ax, ay, fire) { this.match.setInput(this.myId, { s: ++this.seq, x: ax, y: ay, f: fire ? 1 : 0 }); }
+  sendInput(ax, ay, fire, boost) { this.match.setInput(this.myId, { s: ++this.seq, x: ax, y: ay, f: fire ? 1 : 0, b: boost ? 1 : 0 }); }
   close() {}
 }

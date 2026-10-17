@@ -241,7 +241,7 @@ io.on('connection', socket => {
   // damage, elimination and wins are never accepted from the client.
   socket.on('in', d => {
     const room = myRoom();
-    if (room && room.ffa && d && typeof d === 'object') room.ffa.setInput(socket.data.pid, { s: d.s, x: d.x, y: d.y, f: d.f });
+    if (room && room.ffa && d && typeof d === 'object') room.ffa.setInput(socket.data.pid, { s: d.s, x: d.x, y: d.y, f: d.f, b: d.b });   // b = SPACE held (intent only)
   });
   socket.on('png', (t, ack) => { if (typeof ack === 'function') ack(t); });     // latency probe
 

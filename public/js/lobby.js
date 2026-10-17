@@ -85,6 +85,7 @@ export class MenuScene extends UiScene {
     this.drawUi(g, o, 78);
     centerText(g, 'MOUSE - MOVE', o + 156, 0xffffff, 1, SHADOW);
     centerText(g, 'LEFT CLICK - FIRE', o + 164, 0xffffff, 1, SHADOW);
+    centerText(g, 'SPACE - BOOST', o + 172, 0xffffff, 1, SHADOW);
     const st = Net.connected ? 'ONLINE' : 'OFFLINE';
     drawText(g, st, W - 6 - textWidth(st), 4, Net.connected ? 0x7cfc9a : 0xff5a5a, 1, SHADOW);
   }

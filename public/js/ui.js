@@ -1,5 +1,5 @@
 // Pixel font (3x5), HUD, menu and game-over scenes.
-import { W, H, MAX_AMMO, PLAYER_HEALTH, LOW_HP } from './constants.js';
+import { W, H, MAX_AMMO, PLAYER_HEALTH, LOW_HP, BOOST_MAX_ENERGY, BOOST_REARM_ENERGY } from './constants.js';
 import { Sky } from './effects.js';
 import { Sfx } from './audio.js';
 import { Net } from './net.js';
@@ -61,6 +61,12 @@ export class Hud {
     drawText(g, 'HP', bx - 12, 6, 0xffffff, 1, 0x0b2a5c);
     drawHpBar(g, bx, 6, barW, 6, p.hp, this.trail, warn);
     drawText(g, hpTxt, W - 6 - textWidth(hpTxt), 6, p.hp <= LOW_HP ? 0xff5a5a : 0xffffff, 1, 0x0b2a5c);
+    // Boost energy bar: same pixel style as the ammo bar, but WHITE (grey while the boost is locked in cooldown).
+    const en = Math.max(0, Math.min(BOOST_MAX_ENERGY, p.en === undefined ? BOOST_MAX_ENERGY : p.en)), bwb = 60;
+    drawText(g, p.bLocked ? 'BOOST RECARGA' : p.boosting ? 'BOOST!' : 'BOOST', 6, H - 42, p.bLocked ? 0x8a93a8 : 0xffffff, 1, 0x0b2a5c);
+    g.fillStyle(0x3a0e3a, 1); g.fillRect(5, H - 35, bwb + 2, 6);
+    g.fillStyle(p.bLocked ? 0x9aa3b5 : 0xffffff, 1); g.fillRect(6, H - 34, Math.round(bwb * en / BOOST_MAX_ENERGY), 4);
+    if (p.bLocked) { g.fillStyle(0x6a7390, 1); g.fillRect(6 + Math.round(bwb * BOOST_REARM_ENERGY / BOOST_MAX_ENERGY), H - 34, 1, 4); }   // re-arm mark
     drawText(g, `AMMO: ${p.ammo}/${MAX_AMMO}`, 6, H - 26, p.ammo <= 5 ? 0xff5a5a : 0xffffff, 1, 0x0b2a5c);
     if (p.reloading && ((t * 4) | 0) % 2 === 0) drawText(g, 'RELOADING...', 6, H - 19, 0xffd21f, 1, 0x0b2a5c);
     const bw = 60, fill = p.reloading ? p.reloadProgress : p.ammo / MAX_AMMO;
